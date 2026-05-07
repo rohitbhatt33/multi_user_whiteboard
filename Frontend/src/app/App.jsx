@@ -1,222 +1,174 @@
-import { useEffect, useRef, useState } from "react";
-import * as Y from "yjs";
-import { SocketIOProvider } from "y-socket.io";
+import { useEffect, useRef, useState } from "react"
+import * as Y from "yjs"
+import { SocketIOProvider } from "y-socket.io"
 
-function getColor() {
-  const colors = ["#e63946", "#457b9d", "#2a9d8f", "#f4a261", "#9b5de5"];
-  return colors[Math.floor(Math.random() * colors.length)];
+function getRandomColor() {
+  const colors = [
+    "#e63946",
+    "#457b9d",
+    "#2a9d8f",
+    "#f4a261",
+    "#9b5de5",
+    "#ff006e"
+  ]
+  return colors[Math.floor(Math.random() * colors.length)]
 }
 
 export default function App() {
-  const canvasRef = useRef(null);
+  const canvasRef = useRef(null)
+  const clearRef = useRef(null)
+  const [tool, setTool] = useState(["pen","eraser"])  // "pen" | "eraser"
+  const [username, setUsername] = useState("")
+  const [users, setUsers] = useState([])
 
-  const [username, setUsername] = useState("");
-  const [tool, setTool] = useState("pen");
-  const [users, setUsers] = useState([]);
+     const saveBoard = () => {
+  const canvas = canvasRef.current
+  if (!canvas) return
 
+  const link = document.createElement("a")
+  link.download = `whiteboard-${Date.now()}.png`
+  link.href = canvas.toDataURL("image/png")
+  link.click()
+}
   useEffect(() => {
-    if (!username) return;
+    if (!username) return
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    const ydoc = new Y.Doc();
+    const ydoc = new Y.Doc()
 
     const provider = new SocketIOProvider(
-      "https://multi-user-whiteboard.onrender.com",
+      "http://localhost:3000",
       "whiteboard",
-      ydoc,{autoConnect:true}
-    );
+      ydoc,
+      { autoConnect: true }
+    )
 
-    const yItems = ydoc.getArray("items");
-    const color = getColor();
+    const yStrokes = ydoc.getArray("strokes")
+    const userColor = getRandomColor()
 
-    // 👤 Awareness (IMPORTANT FIXED PART)
+    // 👤 Awareness setup
     provider.awareness.setLocalStateField("user", {
       username,
-      color,
+      color: userColor,
       cursor: null
-    });
+    })
 
     const updateUsers = () => {
-      const states = Array.from(provider.awareness.getStates().values());
-
+      const states = Array.from(provider.awareness.getStates().values())
       setUsers(
         states
-          .map(s => s.user)
-          .filter(Boolean)
-      );
-    };
+          .filter(state => state.user?.username)
+          .map(state => state.user)
+      )
+    }
 
-    provider.awareness.on("change", updateUsers);
+    updateUsers()
+    provider.awareness.on("change", updateUsers)
 
-    let drawing = false;
-    let start = null;
-    let points = [];
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext("2d")
 
-    const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      render();
-    };
+    canvas.width = window.innerWidth
+    canvas.height = window.innerHeight
 
-    // 📐 GRID
-    const drawGrid = () => {
-      const step = 40;
-
-      ctx.strokeStyle = "#eee";
-      ctx.lineWidth = 1;
-
-      for (let x = 0; x < canvas.width; x += step) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-      }
-
-      for (let y = 0; y < canvas.height; y += step) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
-      }
-    };
-
-    // 🎨 RENDER
     const render = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawGrid();
+  ctx.fillStyle = "#ffffff"
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      const items = yItems.toArray();
+  yStrokes.toArray().forEach(stroke => {
+    if (!stroke?.points || stroke.points.length < 2) return
 
-      items.forEach(w => {
-        const o = w?.[0];
-        if (!o) return;
+    ctx.beginPath()
+    ctx.strokeStyle = stroke.color || "#000000"
+ctx.lineWidth = stroke.width || 3
+ctx.lineCap = "round"
+ctx.lineJoin = "round"
 
-        ctx.strokeStyle = o.color || "#000";
+    const first = stroke.points[0]
+    ctx.moveTo(first.x, first.y)
 
-        if (o.type === "pen") {
-          ctx.beginPath();
-          ctx.moveTo(o.points[0].x, o.points[0].y);
+    stroke.points.forEach(point => {
+      ctx.lineTo(point.x, point.y)
+    })
 
-          for (let i = 1; i < o.points.length; i++) {
-            ctx.lineTo(o.points[i].x, o.points[i].y);
-          }
+    ctx.stroke()
+  })
+}
 
-          ctx.stroke();
-        }
+    yStrokes.observe(render)
+    render()
 
-        if (o.type === "rect") {
-          ctx.strokeRect(o.x, o.y, o.w, o.h);
-        }
+    let drawing = false
+    let currentStroke = []
 
-        if (o.type === "circle") {
-          ctx.beginPath();
-          ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      });
-    };
+    canvas.onmousedown = e => {
+      drawing = true
+      currentStroke = [{ x: e.offsetX, y: e.offsetY }]
+    }
 
-    resize();
-    window.addEventListener("resize", resize);
-
-    yItems.observe(render);
-
-    // 📍 FIX MOBILE COORDS
-    const getPos = (e) => {
-      const rect = canvas.getBoundingClientRect();
-      return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-      };
-    };
-
-    // 🟢 START
-    canvas.addEventListener("pointerdown", (e) => {
-      drawing = true;
-      const p = getPos(e);
-
-      if (tool === "pen") {
-        points = [p];
-      }
-
-      if (tool === "rect" || tool === "circle") {
-        start = p;
-      }
-    });
-
-    // ✏️ MOVE
-    canvas.addEventListener("pointermove", (e) => {
-      if (!drawing || tool !== "pen") return;
-
-      const p = getPos(e);
-      points.push(p);
-
-      const prev = points[points.length - 2];
-      if (!prev) return;
-
-      ctx.strokeStyle = "#000";
-      ctx.beginPath();
-      ctx.moveTo(prev.x, prev.y);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-
-      // 👇 LIVE CURSOR UPDATE (IMPORTANT)
+    canvas.onmousemove = e => {
+      // 👇 Update cursor position
       provider.awareness.setLocalStateField("user", {
         username,
-        color,
-        cursor: p
-      });
-    });
+        color: userColor,
+        cursor: { x: e.clientX, y: e.clientY }
+      })
 
-    // 🔴 END
-    canvas.addEventListener("pointerup", (e) => {
-      drawing = false;
+      if (!drawing) return
+      currentStroke.push({ x: e.offsetX, y: e.offsetY })
+      render()
+      ctx.beginPath()
+      ctx.moveTo(currentStroke[0].x, currentStroke[0].y)
+      currentStroke.forEach(p => ctx.lineTo(p.x, p.y))
+      ctx.stroke()
+    }
 
-      const p = getPos(e);
+    canvas.onmouseup = () => {
+  if (!drawing) return
+  drawing = false
 
-      if (tool === "pen" && points.length > 1) {
-        yItems.push([{
-          type: "pen",
-          points: [...points],
-          color
-        }]);
+  if (tool === "pen") {
+    if (currentStroke.length > 1) {
+      yStrokes.push([
+        {
+          points: [...currentStroke],
+          color: userColor
+        }
+      ])
+    }
+  }
+
+  if (tool === "eraser") {
+    const strokes = yStrokes.toArray()
+
+    strokes.forEach((stroke, index) => {
+      if (!stroke?.points) return
+
+      const shouldDelete = stroke.points.some(point =>
+        currentStroke.some(eraserPoint =>
+          Math.abs(point.x - eraserPoint.x) < 50 &&
+          Math.abs(point.y - eraserPoint.y) < 50
+        )
+      )
+
+      if (shouldDelete) {
+        yStrokes.delete(index, 1)
       }
-
-      if (tool === "rect" && start) {
-        yItems.push([{
-          type: "rect",
-          x: start.x,
-          y: start.y,
-          w: p.x - start.x,
-          h: p.y - start.y,
-          color
-        }]);
-      }
-
-      if (tool === "circle" && start) {
-        yItems.push([{
-          type: "circle",
-          x: start.x,
-          y: start.y,
-          r: Math.hypot(p.x - start.x, p.y - start.y),
-          color
-        }]);
-      }
-
-      points = [];
-      start = null;
-    });
+    })
+  }
+}
+    // 🧽 Clear board (synced)
+    clearRef.current = () => {
+      yStrokes.delete(0, yStrokes.length)
+    }
 
     return () => {
-      provider.disconnect();
-      window.removeEventListener("resize", resize);
-      ydoc.destroy();
-    };
-  }, [username, tool]);
+      provider.disconnect()
+      ydoc.destroy()
+    }
 
-  // 🔐 LOGIN SCREEN
+  }, [username])
+
+  // 🔐 Join screen
   if (!username) {
     return (
       <div style={{
@@ -226,56 +178,127 @@ export default function App() {
         alignItems: "center"
       }}>
         <form onSubmit={(e) => {
-          e.preventDefault();
-          setUsername(e.target.username.value);
+          e.preventDefault()
+          setUsername(e.target.username.value)
         }}>
-          <input name="username" placeholder="Enter name" />
-          <button>Join</button>
+          <input
+            name="username"
+            placeholder="Enter your name"
+            style={{ padding: 10, marginRight: 10 }}
+          />
+          <button type="submit">Join</button>
         </form>
       </div>
-    );
+    )
   }
 
-  return (
-    <>
-      {/* TOOLBAR */}
-      <div style={{
-        position: "absolute",
-        top: 10,
-        left: "50%",
-        transform: "translateX(-50%)",
-        display: "flex",
-        gap: 10,
-        background: "white",
-        padding: 10,
-        borderRadius: 10,
-        zIndex: 10
-      }}>
-        <button onClick={() => setTool("pen")}>✏️</button>
-        <button onClick={() => setTool("rect")}>⬛</button>
-        <button onClick={() => setTool("circle")}>⚪</button>
-      </div>
-
-      {/* 👥 USERS (FIXED - NOW VISIBLE) */}
-      <div style={{
-        position: "absolute",
-        top: 10,
-        left: 10,
-        background: "white",
-        padding: 10,
-        borderRadius: 8,
-        zIndex: 20
-      }}>
-        <strong>Users</strong>
+ return (
+  <>
+    {/* 👥 Users Panel */}
+    <div style={{
+      position: "absolute",
+      top: 10,
+      left: 10,
+      background: "white",
+      padding: 10,
+      borderRadius: 6,
+      zIndex: 10
+    }}>
+      <strong>Users:</strong>
+      <ul>
         {users.map((u, i) => (
-          <div key={i} style={{ color: u.color }}>
-            ● {u.username}
-          </div>
+          <li key={i} style={{ color: u.color }}>
+            {u.username}
+          </li>
         ))}
-      </div>
+      </ul>
+    </div>
 
-      {/* CURSORS */}
-      {users.map((u, i) => u.cursor && (
+    {/* 🧽 Clear Button */}
+    <button
+      onClick={() => clearRef.current()}
+      style={{
+        position: "absolute",
+        top: 10,
+        right: 10,
+        padding: "8px 14px",
+        background: "red",
+        color: "white",
+        border: "none",
+        borderRadius: 5,
+        cursor: "pointer",
+        zIndex: 20
+      }}
+    >
+      Clear Board
+    </button>
+
+    {/* 💾 Save Button */}
+    <button
+      onClick={saveBoard}
+      style={{
+        position: "absolute",
+        top: 10,
+        right: 140,
+        padding: "8px 14px",
+        background: "green",
+        color: "white",
+        border: "none",
+        borderRadius: 5,
+        cursor: "pointer",
+        zIndex: 20
+      }}
+    >
+      Save
+    </button>
+
+    {/* ✏ Tool Selector */}
+    <div style={{
+      position: "absolute",
+      top: 60,
+      right: 10,
+      display: "flex",
+      gap: 10,
+      zIndex: 20
+    }}>
+      <button
+        onClick={() => setTool("pen")}
+        style={{
+          padding: "6px 12px",
+          background: tool === "pen" ? "black" : "#ccc",
+          color: "white",
+          border: "none",
+          borderRadius: 5,
+          cursor: "pointer"
+        }}
+      >
+        Pen
+      </button>
+
+      <button
+        onClick={() => setTool("eraser")}
+        style={{
+          padding: "6px 12px",
+          background: tool === "eraser" ? "black" : "#ccc",
+          color: "white",
+          border: "none",
+          borderRadius: 5,
+          cursor: "pointer"
+        }}
+      >
+        Eraser
+      </button>
+    </div>
+
+    {/* 🎨 Canvas */}
+    <canvas
+      ref={canvasRef}
+      style={{ display: "block" }}
+    />
+
+    {/* 🖱 Colored Cursors */}
+    {users.map((u, i) =>
+      u.cursor ? (
         <div
           key={i}
           style={{
@@ -283,27 +306,29 @@ export default function App() {
             left: u.cursor.x,
             top: u.cursor.y,
             pointerEvents: "none",
+            transform: "translate(-50%, -50%)",
             zIndex: 30
           }}
         >
           <div style={{
-            width: 10,
-            height: 10,
+            width: 12,
+            height: 12,
             borderRadius: "50%",
             background: u.color
           }} />
+          <div style={{
+            fontSize: 12,
+            background: u.color,
+            color: "white",
+            padding: "2px 6px",
+            borderRadius: 4,
+            marginTop: 4
+          }}>
+            {u.username}
+          </div>
         </div>
-      ))}
-
-      <canvas
-        ref={canvasRef}
-        style={{
-          width: "100vw",
-          height: "100vh",
-          display: "block",
-          touchAction: "none"
-        }}
-      />
-    </>
-  );
+      ) : null
+    )}
+  </>
+)
 }
