@@ -317,7 +317,7 @@ export default function App() {
         <button onClick={() => setTool("rect")}>⬛</button>
         <button onClick={() => setTool("circle")}>⚪</button>
         <button onClick={() => setTool("text")}>📝</button>
-        <button onClick={() => setTool("pan")}>✋</button>
+       {/* <button onClick={() => setTool("pan")}>✋</button>*/}
 
         <button onClick={clearBoard}>🧹</button>
       </div>
