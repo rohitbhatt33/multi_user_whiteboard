@@ -75,4 +75,4 @@ jobs:
       # - SSH into server and pull latest code
 
       - name: Deployment complete
-        run: echo "Deployment completed successfully!"
+        run: echo "Deployment completed successfully!)"
