@@ -9,22 +9,15 @@ function getRandomColor() {
 
 export default function App() {
   const canvasRef = useRef(null);
+  const inputRef = useRef(null);
 
   const [tool, setTool] = useState("pen");
   const [username, setUsername] = useState("");
-  const [textBox, setTextBox] = useState(null);
-
-  const scaleRef = useRef(1);
-  const offsetRef = useRef({ x: 0, y: 0 });
-
-  const panRef = useRef(false);
-  const lastPan = useRef({ x: 0, y: 0 });
+  const [users, setUsers] = useState([]);
+  const [editingText, setEditingText] = useState(null);
 
   useEffect(() => {
     if (!username) return;
-
-    document.body.style.margin = "0";
-    document.body.style.overflow = "hidden";
 
     const ydoc = new Y.Doc();
 
@@ -38,26 +31,18 @@ export default function App() {
 
     const userColor = getRandomColor();
 
+    provider.awareness.setLocalStateField("user", {
+      username,
+      color: userColor,
+      cursor: null
+    });
+
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
     let drawing = false;
     let start = null;
     let points = [];
-
-    // 🧠 EXPOSE FOR CLEAR BUTTON
-    window.__yObjects = yObjects;
-
-    const toWorld = (x, y) => ({
-      x: (x - offsetRef.current.x) / scaleRef.current,
-      y: (y - offsetRef.current.y) / scaleRef.current
-    });
-
-    const applyTransform = () => {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.translate(offsetRef.current.x, offsetRef.current.y);
-      ctx.scale(scaleRef.current, scaleRef.current);
-    };
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -76,20 +61,16 @@ export default function App() {
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      applyTransform();
-
       yObjects.toArray().forEach(obj => {
         if (!obj) return;
 
-        ctx.strokeStyle = obj.color || "#000";
-        ctx.fillStyle = obj.color || "#000";
+        ctx.strokeStyle = obj.color;
+        ctx.fillStyle = obj.color;
         ctx.lineWidth = 2;
 
         // ✏️ PEN
         if (obj.type === "pen") {
           const pts = obj.points;
-          if (!pts?.length) return;
-
           ctx.beginPath();
           ctx.moveTo(pts[0].x, pts[0].y);
 
@@ -100,19 +81,7 @@ export default function App() {
           ctx.stroke();
         }
 
-        // ⬛ RECT
-        if (obj.type === "rect") {
-          ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
-        }
-
-        // ⚪ CIRCLE
-        if (obj.type === "circle") {
-          ctx.beginPath();
-          ctx.arc(obj.x, obj.y, obj.r, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        // 📝 TEXT
+        // 📝 TEXT (now editable + visible)
         if (obj.type === "text") {
           ctx.font = "16px Arial";
           ctx.fillText(obj.text, obj.x, obj.y);
@@ -124,26 +93,37 @@ export default function App() {
     window.addEventListener("resize", resize);
     yObjects.observe(render);
 
-    const getPos = (e) => toWorld(e.clientX, e.clientY);
+    const getPos = (e) => ({
+      x: e.clientX,
+      y: e.clientY
+    });
 
     // 🖱 POINTER DOWN
     canvas.onpointerdown = (e) => {
       const pos = getPos(e);
 
-      // ✋ PAN
-      if (e.button === 1 || tool === "pan") {
-        panRef.current = true;
-        lastPan.current = { x: e.clientX, y: e.clientY };
-        return;
-      }
-
-      // 📝 TEXT
+      // 📝 TEXT TOOL → create editable text object
       if (tool === "text") {
-        setTextBox({
+        const newText = {
+          type: "text",
           x: pos.x,
           y: pos.y,
-          value: ""
+          text: "Type...",
+          color: userColor
+        };
+
+        yObjects.push([newText]);
+
+        setEditingText({
+          obj: newText,
+          x: pos.x,
+          y: pos.y
         });
+
+        setTimeout(() => {
+          inputRef.current.focus();
+        }, 0);
+
         return;
       }
 
@@ -152,101 +132,26 @@ export default function App() {
       points = [pos];
     };
 
-    // 🖱 MOVE
+    // 🖱 MOVE (pen only)
     canvas.onpointermove = (e) => {
-      const pos = getPos(e);
-
-      // ✋ PAN
-      if (panRef.current) {
-        offsetRef.current.x += e.clientX - lastPan.current.x;
-        offsetRef.current.y += e.clientY - lastPan.current.y;
-
-        lastPan.current = { x: e.clientX, y: e.clientY };
-        render();
-        return;
-      }
-
-      // 🧽 ERASER (FIXED)
-      if (tool === "eraser") {
-        const objs = yObjects.toArray();
-
-        objs.forEach((obj, index) => {
-          if (!obj?.points) return;
-
-          const hit = obj.points.some(p =>
-            Math.abs(p.x - pos.x) < 20 &&
-            Math.abs(p.y - pos.y) < 20
-          );
-
-          if (hit) yObjects.delete(index, 1);
-        });
-
-        return;
-      }
-
       if (!drawing || tool !== "pen") return;
-
-      points.push(pos);
+      points.push(getPos(e));
     };
 
     // 🖱 UP
-    canvas.onpointerup = (e) => {
-      panRef.current = false;
-
+    canvas.onpointerup = () => {
       if (!drawing) return;
       drawing = false;
 
-      const end = getPos(e);
-
       if (tool === "pen") {
-        yObjects.push([{ type: "pen", points: [...points], color: "#000" }]);
+        yObjects.push([
+          {
+            type: "pen",
+            points: [...points],
+            color: userColor
+          }
+        ]);
       }
-
-      if (tool === "rect") {
-        yObjects.push([{
-          type: "rect",
-          x: start.x,
-          y: start.y,
-          w: end.x - start.x,
-          h: end.y - start.y,
-          color: "#000"
-        }]);
-      }
-
-      if (tool === "circle") {
-        const r = Math.sqrt(
-          Math.pow(end.x - start.x, 2) +
-          Math.pow(end.y - start.y, 2)
-        );
-
-        yObjects.push([{
-          type: "circle",
-          x: start.x,
-          y: start.y,
-          r,
-          color: "#000"
-        }]);
-      }
-    };
-
-    // 🔍 ZOOM
-    canvas.onwheel = (e) => {
-      e.preventDefault();
-
-      const mouse = toWorld(e.clientX, e.clientY);
-
-      const zoomIntensity = 0.1;
-      const wheel = e.deltaY < 0 ? 1 : -1;
-      const zoom = Math.exp(wheel * zoomIntensity);
-
-      const newScale = scaleRef.current * zoom;
-
-      offsetRef.current.x = e.clientX - mouse.x * newScale;
-      offsetRef.current.y = e.clientY - mouse.y * newScale;
-
-      scaleRef.current = newScale;
-
-      render();
     };
 
     canvas.style.touchAction = "none";
@@ -258,30 +163,20 @@ export default function App() {
     };
   }, [username, tool]);
 
-  // 🧹 CLEAR
-  const clearBoard = () => {
-    window.__yObjects?.delete(0, window.__yObjects.length);
+  // ✍️ SAVE TEXT EDIT
+  const saveText = (value) => {
+    const canvas = canvasRef.current;
+    const ydoc = window.__ydoc;
+    if (!editingText) return;
+
+    const ctx = canvas.__yctx;
+
+    editingText.obj.text = value;
+
+    setEditingText(null);
   };
 
-  // 📝 SAVE TEXT
-  const saveText = () => {
-    if (!textBox?.value) {
-      setTextBox(null);
-      return;
-    }
-
-    window.__yObjects.push([{
-      type: "text",
-      x: textBox.x,
-      y: textBox.y,
-      text: textBox.value,
-      color: "#000"
-    }]);
-
-    setTextBox(null);
-  };
-
-  // 🔐 JOIN SCREEN
+  // 🔐 JOIN
   if (!username) {
     return (
       <div style={{ height: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
@@ -312,12 +207,7 @@ export default function App() {
         zIndex: 10
       }}>
         <button onClick={() => setTool("pen")}>✏️</button>
-        <button onClick={() => setTool("rect")}>⬛</button>
-        <button onClick={() => setTool("circle")}>⚪</button>
         <button onClick={() => setTool("text")}>📝</button>
-        <button onClick={() => setTool("pan")}>✋</button>
-
-        <button onClick={clearBoard}>🧹</button>
       </div>
 
       {/* CANVAS */}
@@ -330,27 +220,29 @@ export default function App() {
         }}
       />
 
-      {/* 📝 INLINE TEXT INPUT */}
-      {textBox && (
+      {/* 📝 REAL INLINE TEXT EDITOR */}
+      {editingText && (
         <input
-          autoFocus
-          value={textBox.value}
-          onChange={(e) =>
-            setTextBox({ ...textBox, value: e.target.value })
-          }
-          onBlur={saveText}
+          ref={inputRef}
+          defaultValue={editingText.obj.text}
+          onBlur={(e) => {
+            editingText.obj.text = e.target.value;
+            setEditingText(null);
+          }}
           onKeyDown={(e) => {
-            if (e.key === "Enter") e.target.blur();
+            if (e.key === "Enter") {
+              e.target.blur();
+            }
           }}
           style={{
             position: "fixed",
-            left: textBox.x,
-            top: textBox.y,
+            left: editingText.x,
+            top: editingText.y,
             fontSize: 16,
-            padding: 4,
             border: "1px solid #ccc",
-            background: "white",
-            zIndex: 9999
+            padding: 4,
+            outline: "none",
+            background: "white"
           }}
         />
       )}
