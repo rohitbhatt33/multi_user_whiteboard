@@ -32,7 +32,9 @@ export default function App() {
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
-      ydoc
+      ydoc,  {
+      autoConnect: true
+    }
     );
 
     const yObjects = ydoc.getArray("objects");
