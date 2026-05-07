@@ -9,18 +9,17 @@ function getRandomColor() {
 
 export default function App() {
   const canvasRef = useRef(null);
+  const inputRef = useRef(null);
 
   const [tool, setTool] = useState("pen");
   const [username, setUsername] = useState("");
-  const [objects, setObjects] = useState([]);
+  const [textBox, setTextBox] = useState(null);
 
   const scaleRef = useRef(1);
   const offsetRef = useRef({ x: 0, y: 0 });
 
   const panRef = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
-
-  const editingRef = useRef(null);
 
   useEffect(() => {
     if (!username) return;
@@ -33,9 +32,7 @@ export default function App() {
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
-      ydoc,  {
-      autoConnect: true
-    }
+      ydoc
     );
 
     const yObjects = ydoc.getArray("objects");
@@ -127,7 +124,7 @@ export default function App() {
 
     const getPos = (e) => toWorld(e.clientX, e.clientY);
 
-    // 🖱 DOWN
+    // 🖱 POINTER DOWN
     canvas.onpointerdown = (e) => {
       const pos = getPos(e);
 
@@ -138,19 +135,15 @@ export default function App() {
         return;
       }
 
-      // 📝 TEXT
+      // 📝 TEXT TOOL (NO PROMPT EVER)
       if (tool === "text") {
-        const text = prompt("Enter text");
-        if (!text) return;
-
-        yObjects.push([{
-          type: "text",
+        setTextBox({
           x: pos.x,
           y: pos.y,
-          text,
-          color: "#000"
-        }]);
+          value: ""
+        });
 
+        setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
 
@@ -187,37 +180,17 @@ export default function App() {
       const end = getPos(e);
 
       if (tool === "pen") {
-        yObjects.push([{
-          type: "pen",
-          points: [...points],
-          color: "#000"
-        }]);
+        yObjects.push([{ type: "pen", points: [...points], color: "#000" }]);
       }
 
       if (tool === "rect") {
-        yObjects.push([{
-          type: "rect",
-          x: start.x,
-          y: start.y,
-          w: end.x - start.x,
-          h: end.y - start.y,
-          color: "#000"
-        }]);
+        yObjects.push([{ type: "rect", x: start.x, y: start.y, w: end.x - start.x, h: end.y - start.y, color: "#000" }]);
       }
 
       if (tool === "circle") {
-        const r = Math.sqrt(
-          Math.pow(end.x - start.x, 2) +
-          Math.pow(end.y - start.y, 2)
-        );
+        const r = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
 
-        yObjects.push([{
-          type: "circle",
-          x: start.x,
-          y: start.y,
-          r,
-          color: "#000"
-        }]);
+        yObjects.push([{ type: "circle", x: start.x, y: start.y, r, color: "#000" }]);
       }
     };
 
@@ -233,11 +206,8 @@ export default function App() {
 
       const newScale = scaleRef.current * zoom;
 
-      offsetRef.current.x =
-        e.clientX - mouse.x * newScale;
-
-      offsetRef.current.y =
-        e.clientY - mouse.y * newScale;
+      offsetRef.current.x = e.clientX - mouse.x * newScale;
+      offsetRef.current.y = e.clientY - mouse.y * newScale;
 
       scaleRef.current = newScale;
 
@@ -253,7 +223,27 @@ export default function App() {
     };
   }, [username, tool]);
 
-  // 🔐 JOIN
+  // 💾 SAVE TEXT (INLINE)
+  const saveText = () => {
+    if (!textBox?.value) {
+      setTextBox(null);
+      return;
+    }
+
+    const yObjects = window.__yObjects;
+
+    yObjects?.push([{
+      type: "text",
+      x: textBox.x,
+      y: textBox.y,
+      text: textBox.value,
+      color: "#000"
+    }]);
+
+    setTextBox(null);
+  };
+
+  // 🔐 JOIN SCREEN
   if (!username) {
     return (
       <div style={{ height: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
@@ -299,6 +289,32 @@ export default function App() {
           display: "block"
         }}
       />
+
+      {/* 📝 INLINE TEXT EDITOR (NO PROMPT) */}
+      {textBox && (
+        <input
+          ref={inputRef}
+          value={textBox.value}
+          onChange={(e) =>
+            setTextBox({ ...textBox, value: e.target.value })
+          }
+          onBlur={saveText}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.target.blur();
+          }}
+          style={{
+            position: "fixed",
+            left: textBox.x,
+            top: textBox.y,
+            fontSize: 16,
+            border: "1px solid #ccc",
+            padding: 4,
+            outline: "none",
+            background: "white",
+            zIndex: 9999
+          }}
+        />
+      )}
     </>
   );
 }
