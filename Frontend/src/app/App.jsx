@@ -38,6 +38,8 @@ export default function App() {
 
     const yObjects = ydoc.getArray("objects");
 
+    window.__yObjects = yObjects;
+
     const userColor = getRandomColor();
 
     const canvas = canvasRef.current;
@@ -47,13 +49,15 @@ export default function App() {
     let start = null;
     let points = [];
 
-    // 🧠 EXPOSE FOR CLEAR BUTTON
-    window.__yObjects = yObjects;
+    // 🚀 FIXED COORDINATE SYSTEM (MOBILE SAFE)
+    const getPos = (e) => {
+      const rect = canvas.getBoundingClientRect();
 
-    const toWorld = (x, y) => ({
-      x: (x - offsetRef.current.x) / scaleRef.current,
-      y: (y - offsetRef.current.y) / scaleRef.current
-    });
+      return {
+        x: (e.clientX - rect.left - offsetRef.current.x) / scaleRef.current,
+        y: (e.clientY - rect.top - offsetRef.current.y) / scaleRef.current
+      };
+    };
 
     const applyTransform = () => {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -126,26 +130,22 @@ export default function App() {
     window.addEventListener("resize", resize);
     yObjects.observe(render);
 
-    const getPos = (e) => toWorld(e.clientX, e.clientY);
+    canvas.style.touchAction = "none";
 
-    // 🖱 POINTER DOWN
+    // 🖱 DOWN
     canvas.onpointerdown = (e) => {
       const pos = getPos(e);
 
-      // ✋ PAN
+      // ✋ PAN MODE
       if (e.button === 1 || tool === "pan") {
         panRef.current = true;
         lastPan.current = { x: e.clientX, y: e.clientY };
         return;
       }
 
-      // 📝 TEXT
+      // 📝 TEXT TOOL (NO PROMPT)
       if (tool === "text") {
-        setTextBox({
-          x: pos.x,
-          y: pos.y,
-          value: ""
-        });
+        setTextBox({ x: pos.x, y: pos.y, value: "" });
         return;
       }
 
@@ -168,19 +168,19 @@ export default function App() {
         return;
       }
 
-      // 🧽 ERASER (FIXED)
+      // 🧽 ERASER
       if (tool === "eraser") {
-        const objs = yObjects.toArray();
+        const objs = window.__yObjects.toArray();
 
         objs.forEach((obj, index) => {
           if (!obj?.points) return;
 
           const hit = obj.points.some(p =>
-            Math.abs(p.x - pos.x) < 20 &&
-            Math.abs(p.y - pos.y) < 20
+            Math.abs(p.x - pos.x) < 25 &&
+            Math.abs(p.y - pos.y) < 25
           );
 
-          if (hit) yObjects.delete(index, 1);
+          if (hit) window.__yObjects.delete(index, 1);
         });
 
         return;
@@ -201,18 +201,22 @@ export default function App() {
       const end = getPos(e);
 
       if (tool === "pen") {
-        yObjects.push([{ type: "pen", points: [...points], color: "#000" }]);
+        window.__yObjects.push([
+          { type: "pen", points: [...points], color: "#000" }
+        ]);
       }
 
       if (tool === "rect") {
-        yObjects.push([{
-          type: "rect",
-          x: start.x,
-          y: start.y,
-          w: end.x - start.x,
-          h: end.y - start.y,
-          color: "#000"
-        }]);
+        window.__yObjects.push([
+          {
+            type: "rect",
+            x: start.x,
+            y: start.y,
+            w: end.x - start.x,
+            h: end.y - start.y,
+            color: "#000"
+          }
+        ]);
       }
 
       if (tool === "circle") {
@@ -221,13 +225,15 @@ export default function App() {
           Math.pow(end.y - start.y, 2)
         );
 
-        yObjects.push([{
-          type: "circle",
-          x: start.x,
-          y: start.y,
-          r,
-          color: "#000"
-        }]);
+        window.__yObjects.push([
+          {
+            type: "circle",
+            x: start.x,
+            y: start.y,
+            r,
+            color: "#000"
+          }
+        ]);
       }
     };
 
@@ -235,7 +241,7 @@ export default function App() {
     canvas.onwheel = (e) => {
       e.preventDefault();
 
-      const mouse = toWorld(e.clientX, e.clientY);
+      const mouse = getPos(e);
 
       const zoomIntensity = 0.1;
       const wheel = e.deltaY < 0 ? 1 : -1;
@@ -251,19 +257,12 @@ export default function App() {
       render();
     };
 
-    canvas.style.touchAction = "none";
-
     return () => {
       provider.disconnect();
       window.removeEventListener("resize", resize);
       ydoc.destroy();
     };
   }, [username, tool]);
-
-  // 🧹 CLEAR
-  const clearBoard = () => {
-    window.__yObjects?.delete(0, window.__yObjects.length);
-  };
 
   // 📝 SAVE TEXT
   const saveText = () => {
@@ -272,13 +271,15 @@ export default function App() {
       return;
     }
 
-    window.__yObjects.push([{
-      type: "text",
-      x: textBox.x,
-      y: textBox.y,
-      text: textBox.value,
-      color: "#000"
-    }]);
+    window.__yObjects.push([
+      {
+        type: "text",
+        x: textBox.x,
+        y: textBox.y,
+        text: textBox.value,
+        color: "#000"
+      }
+    ]);
 
     setTextBox(null);
   };
@@ -317,9 +318,8 @@ export default function App() {
         <button onClick={() => setTool("rect")}>⬛</button>
         <button onClick={() => setTool("circle")}>⚪</button>
         <button onClick={() => setTool("text")}>📝</button>
-       {/* <button onClick={() => setTool("pan")}>✋</button>*/}
-
-        <button onClick={clearBoard}>🧹</button>
+        <button onClick={() => setTool("eraser")}>🧽</button>
+        {/*<button onClick={() => setTool("pan")}>✋</button>*/}
       </div>
 
       {/* CANVAS */}
@@ -332,7 +332,7 @@ export default function App() {
         }}
       />
 
-      {/* 📝 INLINE TEXT INPUT */}
+      {/* 📝 TEXT INPUT */}
       {textBox && (
         <input
           autoFocus
@@ -350,8 +350,8 @@ export default function App() {
             top: textBox.y,
             fontSize: 16,
             padding: 4,
-            border: "1px solid #ccc",
             background: "white",
+            border: "1px solid #ccc",
             zIndex: 9999
           }}
         />
