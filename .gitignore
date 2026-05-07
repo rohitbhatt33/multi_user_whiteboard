@@ -1,2 +1,35 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+build/
+
+# logs
+logs
+*.log
+npm-debug.log*
+
+# env
 .env
-node_modules
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+
+# Docker
+*.tar
+
+# coverage
+coverage/
+
+# vite
+.vite/
+
+# temporary
+tmp/
+temp/
