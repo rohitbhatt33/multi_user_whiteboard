@@ -13,10 +13,8 @@ export default function App() {
   const [username, setUsername] = useState("");
   const [tool, setTool] = useState("pen");
   const [selectedId, setSelectedId] = useState(null);
-  const [textInput, setTextInput] = useState(null);
 
   const viewport = useRef({ x: 0, y: 0, scale: 1 });
-
   const drag = useRef({ active: false, ox: 0, oy: 0 });
 
   useEffect(() => {
@@ -26,6 +24,7 @@ export default function App() {
     const ctx = canvas.getContext("2d");
 
     const ydoc = new Y.Doc();
+
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
@@ -69,17 +68,29 @@ export default function App() {
       ctx.translate(viewport.current.x, viewport.current.y);
       ctx.scale(viewport.current.scale, viewport.current.scale);
 
-      yItems.toArray().forEach((wrap) => {
+      const items = yItems.toArray();
+
+      for (let i = 0; i < items.length; i++) {
+        const wrap = items[i];
+
+        if (!wrap || !Array.isArray(wrap)) continue;
+
         const o = wrap[0];
-        if (!o) return;
+
+        // 🧠 HARD SAFETY GUARD (FIXES YOUR CRASH)
+        if (!o || typeof o !== "object" || !o.type) continue;
 
         ctx.strokeStyle = o.color || "#000";
         ctx.fillStyle = o.color || "#000";
 
-        if (o.type === "pen") {
+        if (o.type === "pen" && o.points?.length > 1) {
           ctx.beginPath();
           ctx.moveTo(o.points[0].x, o.points[0].y);
-          o.points.forEach(p => ctx.lineTo(p.x, p.y));
+
+          for (let j = 1; j < o.points.length; j++) {
+            ctx.lineTo(o.points[j].x, o.points[j].y);
+          }
+
           ctx.stroke();
         }
 
@@ -98,11 +109,15 @@ export default function App() {
           ctx.fillText(o.text, o.x, o.y);
         }
 
-        if (o.id === selectedId) {
+        // 🎯 selection highlight
+        if (o.id && o.id === selectedId) {
           ctx.setLineDash([6, 4]);
           ctx.strokeStyle = "#00aaff";
 
-          if (o.type === "rect") ctx.strokeRect(o.x, o.y, o.w, o.h);
+          if (o.type === "rect") {
+            ctx.strokeRect(o.x, o.y, o.w, o.h);
+          }
+
           if (o.type === "circle") {
             ctx.beginPath();
             ctx.arc(o.x, o.y, o.r + 4, 0, Math.PI * 2);
@@ -111,14 +126,13 @@ export default function App() {
 
           ctx.setLineDash([]);
         }
-      });
+      }
 
       ctx.restore();
     };
 
     resize();
     window.addEventListener("resize", resize);
-
     yItems.observe(render);
 
     canvas.style.touchAction = "none";
@@ -129,9 +143,10 @@ export default function App() {
 
       const items = yItems.toArray();
 
-      // SELECT TOP ITEM
       for (let i = items.length - 1; i >= 0; i--) {
-        const o = items[i][0];
+        const o = items[i]?.[0];
+
+        if (!o || !o.type) continue;
 
         const hit =
           (o.type === "rect" &&
@@ -142,21 +157,18 @@ export default function App() {
 
         if (hit) {
           setSelectedId(o.id);
+
           drag.current = {
             active: true,
             ox: p.x - o.x,
             oy: p.y - o.y
           };
+
           return;
         }
       }
 
       setSelectedId(null);
-
-      if (tool === "text") {
-        setTextInput({ x: p.x, y: p.y, value: "" });
-        return;
-      }
 
       drawing = true;
       stroke = [p];
@@ -166,14 +178,14 @@ export default function App() {
       const rect = canvas.getBoundingClientRect();
       const p = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
 
-      // DRAG OBJECT
+      // 🧲 DRAG OBJECT
       if (drag.current.active && selectedId) {
         const arr = yItems.toArray();
 
-        arr.forEach((w, i) => {
-          const o = w[0];
+        arr.forEach((wrap, i) => {
+          const o = wrap?.[0];
 
-          if (o.id === selectedId) {
+          if (o && o.id === selectedId) {
             o.x = p.x - drag.current.ox;
             o.y = p.y - drag.current.oy;
 
@@ -197,21 +209,25 @@ export default function App() {
       if (!drawing) return;
       drawing = false;
 
-      if (tool === "pen") {
+      // 🧠 SAFE SAVE (FIXES EMPTY / CRASH CASES)
+      if (tool === "pen" && stroke.length > 2) {
         yItems.push([{
           id: crypto.randomUUID(),
           type: "pen",
-          points: stroke,
+          points: [...stroke],
           color: userColor
         }]);
       }
+
+      stroke = [];
     };
 
-    // 🔥 ZOOM (FIXED MOBILE SAFE)
+    // 🔥 ZOOM (FIXED + STABLE)
     canvas.onwheel = (e) => {
       e.preventDefault();
 
       const rect = canvas.getBoundingClientRect();
+
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
@@ -234,7 +250,7 @@ export default function App() {
     };
   }, [username, tool, selectedId]);
 
-  // 🔐 LOGIN
+  // 🔐 LOGIN SCREEN
   if (!username) {
     return (
       <div style={{
@@ -272,28 +288,7 @@ export default function App() {
         <button onClick={() => setTool("pen")}>✏️</button>
         <button onClick={() => setTool("rect")}>⬛</button>
         <button onClick={() => setTool("circle")}>⚪</button>
-        <button onClick={() => setTool("text")}>📝</button>
       </div>
-
-      {/* TEXT INPUT */}
-      {textInput && (
-        <input
-          autoFocus
-          value={textInput.value}
-          onChange={(e) =>
-            setTextInput({ ...textInput, value: e.target.value })
-          }
-          onBlur={() => {
-            // safe insert
-            const ydoc = new Y.Doc();
-          }}
-          style={{
-            position: "absolute",
-            left: textInput.x,
-            top: textInput.y
-          }}
-        />
-      )}
 
       <canvas
         ref={canvasRef}
