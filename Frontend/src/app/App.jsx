@@ -10,31 +10,22 @@ function getRandomColor() {
 export default function App() {
   const canvasRef = useRef(null);
 
-  const [tool, setTool] = useState("pen");
   const [username, setUsername] = useState("");
+  const [tool, setTool] = useState("pen");
   const [users, setUsers] = useState([]);
-  const [color, setColor] = useState("#000000");
-
   const [textInput, setTextInput] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
 
-  const dragRef = useRef({
-    active: false,
-    offsetX: 0,
-    offsetY: 0
-  });
+  const viewport = useRef({ scale: 1, x: 0, y: 0 });
 
-  const viewportRef = useRef({
-    scale: 1,
-    offsetX: 0,
-    offsetY: 0
-  });
+  const drag = useRef({ active: false, offsetX: 0, offsetY: 0 });
+  const history = useRef({ past: [], future: [] });
 
   useEffect(() => {
-    document.body.style.margin = "0";
-    document.body.style.overflow = "hidden";
-
     if (!username) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
 
     const ydoc = new Y.Doc();
 
@@ -50,8 +41,7 @@ export default function App() {
 
     provider.awareness.setLocalStateField("user", {
       username,
-      color: userColor,
-      cursor: null
+      color: userColor
     });
 
     const updateUsers = () => {
@@ -61,34 +51,46 @@ export default function App() {
 
     provider.awareness.on("change", updateUsers);
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
     let drawing = false;
-    let currentStroke = [];
-    let isPanning = false;
-    let lastPan = { x: 0, y: 0 };
+    let current = [];
 
-    // 🎯 TRANSFORM
-    const screenToWorld = (x, y) => {
-      const v = viewportRef.current;
-      return {
-        x: (x - v.offsetX) / v.scale,
-        y: (y - v.offsetY) / v.scale
-      };
+    const screenToWorld = (x, y) => ({
+      x: (x - viewport.current.x) / viewport.current.scale,
+      y: (y - viewport.current.y) / viewport.current.scale
+    });
+
+    const pushHistory = () => {
+      history.current.past.push(JSON.stringify(yStrokes.toArray()));
+      history.current.future = [];
     };
 
-    const applyTransform = () => {
-      const v = viewportRef.current;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.translate(v.offsetX, v.offsetY);
-      ctx.scale(v.scale, v.scale);
+    const undo = () => {
+      if (!history.current.past.length) return;
+
+      history.current.future.push(JSON.stringify(yStrokes.toArray()));
+
+      const prev = JSON.parse(history.current.past.pop());
+      yStrokes.delete(0, yStrokes.length);
+      yStrokes.push(prev);
+      render();
     };
 
-    // 📐 GRID
-    const drawGrid = (w, h) => {
-      ctx.save();
-      ctx.strokeStyle = "#f0f0f0";
+    const redo = () => {
+      if (!history.current.future.length) return;
+
+      history.current.past.push(JSON.stringify(yStrokes.toArray()));
+
+      const next = JSON.parse(history.current.future.pop());
+      yStrokes.delete(0, yStrokes.length);
+      yStrokes.push(next);
+      render();
+    };
+
+    const drawGrid = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      ctx.strokeStyle = "#eee";
 
       for (let x = 0; x < w; x += 40) {
         ctx.beginPath();
@@ -103,45 +105,62 @@ export default function App() {
         ctx.lineTo(w, y);
         ctx.stroke();
       }
-
-      ctx.restore();
     };
 
-    const hitTest = (obj, x, y) => {
-      if (!obj) return false;
+    const render = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      if (obj.type === "rect") {
-        return (
-          x >= obj.x &&
-          x <= obj.x + obj.w &&
-          y >= obj.y &&
-          y <= obj.y + obj.h
-        );
-      }
+      drawGrid();
 
-      if (obj.type === "circle") {
-        const dx = x - obj.x;
-        const dy = y - obj.y;
-        return Math.sqrt(dx * dx + dy * dy) <= obj.r;
-      }
+      ctx.save();
+      ctx.translate(viewport.current.x, viewport.current.y);
+      ctx.scale(viewport.current.scale, viewport.current.scale);
 
-      if (obj.type === "text") {
-        return (
-          x >= obj.x &&
-          x <= obj.x + 200 &&
-          y >= obj.y - 20 &&
-          y <= obj.y
-        );
-      }
+      yStrokes.toArray().forEach(wrap => {
+        const o = wrap[0];
+        if (!o) return;
 
-      if (obj.type === "pen") {
-        return obj.points?.some(p =>
-          Math.abs(p.x - x) < 5 &&
-          Math.abs(p.y - y) < 5
-        );
-      }
+        ctx.strokeStyle = o.color || "#000";
+        ctx.fillStyle = o.color || "#000";
 
-      return false;
+        if (o.type === "pen") {
+          ctx.beginPath();
+          ctx.moveTo(o.points[0].x, o.points[0].y);
+          o.points.forEach(p => ctx.lineTo(p.x, p.y));
+          ctx.stroke();
+        }
+
+        if (o.type === "rect") {
+          ctx.strokeRect(o.x, o.y, o.w, o.h);
+        }
+
+        if (o.type === "circle") {
+          ctx.beginPath();
+          ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        if (o.type === "text") {
+          ctx.font = "16px Arial";
+          ctx.fillText(o.text, o.x, o.y);
+        }
+
+        if (o.id === selectedId) {
+          ctx.setLineDash([5, 5]);
+          ctx.strokeStyle = "#00aaff";
+
+          if (o.type === "rect") ctx.strokeRect(o.x, o.y, o.w, o.h);
+          if (o.type === "circle") {
+            ctx.beginPath();
+            ctx.arc(o.x, o.y, o.r + 5, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          ctx.setLineDash([]);
+        }
+      });
+
+      ctx.restore();
     };
 
     const resize = () => {
@@ -158,155 +177,70 @@ export default function App() {
       render();
     };
 
-    const render = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      drawGrid(window.innerWidth, window.innerHeight);
-
-      ctx.save();
-      applyTransform();
-
-      yStrokes.toArray().forEach((wrap) => {
-        const obj = wrap[0];
-        if (!obj) return;
-
-        ctx.strokeStyle = obj.color || "#000";
-        ctx.fillStyle = obj.color || "#000";
-
-        // ✏️ PEN
-        if (obj.type === "pen") {
-          const pts = obj.points;
-          if (!pts?.length) return;
-
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-
-          for (let i = 1; i < pts.length; i++) {
-            ctx.lineTo(pts[i].x, pts[i].y);
-          }
-
-          ctx.stroke();
-        }
-
-        // ⬛ RECT
-        if (obj.type === "rect") {
-          ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
-        }
-
-        // ⚪ CIRCLE
-        if (obj.type === "circle") {
-          ctx.beginPath();
-          ctx.arc(obj.x, obj.y, obj.r, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        // 📝 TEXT
-        if (obj.type === "text") {
-          ctx.font = "16px Arial";
-          ctx.fillText(obj.text, obj.x, obj.y);
-        }
-
-        // 🎯 SELECTION HIGHLIGHT
-        if (obj.id === selectedId) {
-          ctx.save();
-          ctx.strokeStyle = "#00aaff";
-          ctx.setLineDash([5, 5]);
-
-          if (obj.type === "rect") {
-            ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
-          }
-
-          if (obj.type === "circle") {
-            ctx.beginPath();
-            ctx.arc(obj.x, obj.y, obj.r + 5, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-
-          ctx.restore();
-        }
-      });
-
-      ctx.restore();
-    };
-
-    const renderLive = () => {
-      ctx.save();
-      applyTransform();
-
-      ctx.strokeStyle = userColor;
-      ctx.lineWidth = 3;
-
-      ctx.beginPath();
-      ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
-
-      currentStroke.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
-
-      ctx.restore();
-    };
-
     resize();
     window.addEventListener("resize", resize);
+
     yStrokes.observe(render);
 
     canvas.style.touchAction = "none";
 
-    // 🖱 POINTER DOWN (SELECTION + DRAW)
     canvas.onpointerdown = (e) => {
       const rect = canvas.getBoundingClientRect();
-      const v = viewportRef.current;
 
-      const x = (e.clientX - rect.left - v.offsetX) / v.scale;
-      const y = (e.clientY - rect.top - v.offsetY) / v.scale;
+      const x = (e.clientX - rect.left - viewport.current.x) / viewport.current.scale;
+      const y = (e.clientY - rect.top - viewport.current.y) / viewport.current.scale;
 
-      // 🎯 HIT TEST (SELECT)
       const objs = yStrokes.toArray();
 
       for (let i = objs.length - 1; i >= 0; i--) {
-        const obj = objs[i][0];
+        const o = objs[i][0];
 
-        if (hitTest(obj, x, y)) {
-          setSelectedId(obj.id);
+        const hit =
+          (o.type === "rect" &&
+            x >= o.x && x <= o.x + o.w &&
+            y >= o.y && y <= o.y + o.h) ||
+          (o.type === "circle" &&
+            Math.hypot(x - o.x, y - o.y) <= o.r);
 
-          dragRef.current = {
+        if (hit) {
+          setSelectedId(o.id);
+          drag.current = {
             active: true,
-            offsetX: x - obj.x,
-            offsetY: y - obj.y
+            offsetX: x - o.x,
+            offsetY: y - o.y
           };
-
           return;
         }
       }
 
       setSelectedId(null);
 
+      if (tool === "text") {
+        setTextInput({ x, y, value: "" });
+        return;
+      }
+
       drawing = true;
-      currentStroke = [{ x, y }];
+      current = [{ x, y }];
     };
 
-    // 🖱 POINTER MOVE
     canvas.onpointermove = (e) => {
-      if (dragRef.current.active && selectedId) {
-        const rect = canvas.getBoundingClientRect();
-        const v = viewportRef.current;
+      const rect = canvas.getBoundingClientRect();
 
-        const x = (e.clientX - rect.left - v.offsetX) / v.scale;
-        const y = (e.clientY - rect.top - v.offsetY) / v.scale;
+      const x = (e.clientX - rect.left - viewport.current.x) / viewport.current.scale;
+      const y = (e.clientY - rect.top - viewport.current.y) / viewport.current.scale;
 
-        const newX = x - dragRef.current.offsetX;
-        const newY = y - dragRef.current.offsetY;
-
+      if (drag.current.active && selectedId) {
         const arr = yStrokes.toArray();
 
-        arr.forEach((wrap, index) => {
-          const obj = wrap[0];
+        arr.forEach((w, i) => {
+          const o = w[0];
+          if (o.id === selectedId) {
+            o.x = x - drag.current.offsetX;
+            o.y = y - drag.current.offsetY;
 
-          if (obj.id === selectedId) {
-            obj.x = newX;
-            obj.y = newY;
-
-            yStrokes.delete(index, 1);
-            yStrokes.insert(index, [obj]);
+            yStrokes.delete(i, 1);
+            yStrokes.insert(i, [o]);
           }
         });
 
@@ -316,54 +250,46 @@ export default function App() {
 
       if (!drawing) return;
 
-      const rect = canvas.getBoundingClientRect();
-      const v = viewportRef.current;
+      current.push({ x, y });
 
-      const x = (e.clientX - rect.left - v.offsetX) / v.scale;
-      const y = (e.clientY - rect.top - v.offsetY) / v.scale;
-
-      currentStroke.push({ x, y });
-
-      renderLive();
+      ctx.beginPath();
+      ctx.lineTo(x, y);
     };
 
-    const end = () => {
-      dragRef.current.active = false;
+    canvas.onpointerup = () => {
+      drag.current.active = false;
 
       if (!drawing) return;
       drawing = false;
 
-      const last = currentStroke[currentStroke.length - 1];
+      if (tool === "pen") {
+        yStrokes.push([{
+          id: crypto.randomUUID(),
+          type: "pen",
+          points: [...current],
+          color: userColor
+        }]);
+      }
 
-      yStrokes.push([{
-        id: crypto.randomUUID(),
-        type: "pen",
-        points: [...currentStroke],
-        color: userColor
-      }]);
+      pushHistory();
     };
 
-    canvas.onpointerup = end;
-    canvas.onpointerleave = end;
-
-    // 🔥 ZOOM
     canvas.onwheel = (e) => {
       e.preventDefault();
 
       const rect = canvas.getBoundingClientRect();
-      const v = viewportRef.current;
 
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
       const world = screenToWorld(mx, my);
 
-      const zoom = Math.exp((e.deltaY < 0 ? 1 : -1) * 0.1);
-      const newScale = v.scale * zoom;
+      const zoom = e.deltaY < 0 ? 1.1 : 0.9;
 
-      v.offsetX = mx - world.x * newScale;
-      v.offsetY = my - world.y * newScale;
-      v.scale = newScale;
+      viewport.current.scale *= zoom;
+
+      viewport.current.x = mx - world.x * viewport.current.scale;
+      viewport.current.y = my - world.y * viewport.current.scale;
 
       render();
     };
@@ -373,7 +299,7 @@ export default function App() {
       window.removeEventListener("resize", resize);
       ydoc.destroy();
     };
-  }, [username, tool, color, selectedId]);
+  }, [username, tool, selectedId]);
 
   if (!username) {
     return (
@@ -391,15 +317,50 @@ export default function App() {
 
   return (
     <>
-      <div style={{ position: "absolute", top: 10, left: 10 }}>
-        {users.map((u, i) => (
-          <div key={i} style={{ color: u.color }}>
-            {u.username}
-          </div>
-        ))}
+      {/* TOOLBAR */}
+      <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", background: "white", padding: 10, borderRadius: 20, display: "flex", gap: 10 }}>
+        <button onClick={() => setTool("pen")}>✏️</button>
+        <button onClick={() => setTool("rect")}>⬛</button>
+        <button onClick={() => setTool("circle")}>⚪</button>
+        <button onClick={() => setTool("text")}>📝</button>
+        <button onClick={undo}>↩️</button>
+        <button onClick={redo}>↪️</button>
       </div>
 
       <canvas ref={canvasRef} style={{ width: "100vw", height: "100vh", display: "block" }} />
+
+      {/* TEXT INPUT */}
+      {textInput && (
+        <input
+          autoFocus
+          value={textInput.value}
+          onChange={(e) => setTextInput({ ...textInput, value: e.target.value })}
+          onBlur={() => {
+            yStrokes.push([{
+              id: crypto.randomUUID(),
+              type: "text",
+              x: textInput.x,
+              y: textInput.y,
+              text: textInput.value,
+              color: "#000"
+            }]);
+
+            setTextInput(null);
+          }}
+          style={{
+            position: "fixed",
+            left: textInput.x,
+            top: textInput.y
+          }}
+        />
+      )}
+
+      {/* USERS */}
+      <div style={{ position: "absolute", top: 10, left: 10 }}>
+        {users.map((u, i) => (
+          <div key={i} style={{ color: u.color }}>{u.username}</div>
+        ))}
+      </div>
     </>
   );
 }
