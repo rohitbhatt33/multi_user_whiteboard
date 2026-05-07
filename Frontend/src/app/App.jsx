@@ -43,6 +43,33 @@ export default function App() {
     let drawing = false;
     let stroke = [];
 
+    // 🧠 GRID (FIXED + STABLE)
+    const drawGrid = () => {
+      const step = 40;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      ctx.save();
+      ctx.strokeStyle = "#eeeeee";
+      ctx.lineWidth = 1;
+
+      for (let x = 0; x < w; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+      }
+
+      for (let y = 0; y < h; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    };
+
     const screenToWorld = (x, y) => ({
       x: (x - viewport.current.x) / viewport.current.scale,
       y: (y - viewport.current.y) / viewport.current.scale
@@ -58,32 +85,32 @@ export default function App() {
       canvas.style.height = window.innerHeight + "px";
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
       render();
     };
 
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      drawGrid();
+
       ctx.save();
       ctx.translate(viewport.current.x, viewport.current.y);
       ctx.scale(viewport.current.scale, viewport.current.scale);
 
-      const items = yItems.toArray();
+      const items = yItems.toArray() || [];
 
       for (let i = 0; i < items.length; i++) {
         const wrap = items[i];
-
         if (!wrap || !Array.isArray(wrap)) continue;
 
         const o = wrap[0];
-
-        // 🧠 HARD SAFETY GUARD (FIXES YOUR CRASH)
-        if (!o || typeof o !== "object" || !o.type) continue;
+        if (!o || !o.type) continue;
 
         ctx.strokeStyle = o.color || "#000";
-        ctx.fillStyle = o.color || "#000";
 
-        if (o.type === "pen" && o.points?.length > 1) {
+        // ✏ PEN
+        if (o.type === "pen" && o.points?.length) {
           ctx.beginPath();
           ctx.moveTo(o.points[0].x, o.points[0].y);
 
@@ -94,29 +121,24 @@ export default function App() {
           ctx.stroke();
         }
 
+        // ⬛ RECT
         if (o.type === "rect") {
           ctx.strokeRect(o.x, o.y, o.w, o.h);
         }
 
+        // ⚪ CIRCLE
         if (o.type === "circle") {
           ctx.beginPath();
           ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        if (o.type === "text") {
-          ctx.font = "16px Arial";
-          ctx.fillText(o.text, o.x, o.y);
-        }
-
-        // 🎯 selection highlight
-        if (o.id && o.id === selectedId) {
+        // 🧠 SELECTION
+        if (o.id === selectedId) {
           ctx.setLineDash([6, 4]);
           ctx.strokeStyle = "#00aaff";
 
-          if (o.type === "rect") {
-            ctx.strokeRect(o.x, o.y, o.w, o.h);
-          }
+          if (o.type === "rect") ctx.strokeRect(o.x, o.y, o.w, o.h);
 
           if (o.type === "circle") {
             ctx.beginPath();
@@ -133,11 +155,17 @@ export default function App() {
 
     resize();
     window.addEventListener("resize", resize);
-    yItems.observe(render);
+
+    // 🔥 IMPORTANT: FORCE LIVE RENDER LOOP (FIXES "NOT WORKING" ISSUE)
+    const loop = () => {
+      render();
+      requestAnimationFrame(loop);
+    };
+    loop();
 
     canvas.style.touchAction = "none";
 
-    canvas.onpointerdown = (e) => {
+    canvas.addEventListener("pointerdown", (e) => {
       const rect = canvas.getBoundingClientRect();
       const p = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
 
@@ -145,8 +173,7 @@ export default function App() {
 
       for (let i = items.length - 1; i >= 0; i--) {
         const o = items[i]?.[0];
-
-        if (!o || !o.type) continue;
+        if (!o) continue;
 
         const hit =
           (o.type === "rect" &&
@@ -157,13 +184,11 @@ export default function App() {
 
         if (hit) {
           setSelectedId(o.id);
-
           drag.current = {
             active: true,
             ox: p.x - o.x,
             oy: p.y - o.y
           };
-
           return;
         }
       }
@@ -172,20 +197,20 @@ export default function App() {
 
       drawing = true;
       stroke = [p];
-    };
+    });
 
-    canvas.onpointermove = (e) => {
+    canvas.addEventListener("pointermove", (e) => {
       const rect = canvas.getBoundingClientRect();
       const p = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
 
-      // 🧲 DRAG OBJECT
+      // 🧲 DRAG
       if (drag.current.active && selectedId) {
         const arr = yItems.toArray();
 
         arr.forEach((wrap, i) => {
           const o = wrap?.[0];
 
-          if (o && o.id === selectedId) {
+          if (o?.id === selectedId) {
             o.x = p.x - drag.current.ox;
             o.y = p.y - drag.current.oy;
 
@@ -194,36 +219,34 @@ export default function App() {
           }
         });
 
-        render();
         return;
       }
 
       if (!drawing) return;
 
       stroke.push(p);
-    };
+    });
 
-    canvas.onpointerup = () => {
+    canvas.addEventListener("pointerup", () => {
       drag.current.active = false;
 
       if (!drawing) return;
       drawing = false;
 
-      // 🧠 SAFE SAVE (FIXES EMPTY / CRASH CASES)
-      if (tool === "pen" && stroke.length > 2) {
+      if (stroke.length > 2) {
         yItems.push([{
           id: crypto.randomUUID(),
           type: "pen",
-          points: [...stroke],
+          points: stroke,
           color: userColor
         }]);
       }
 
       stroke = [];
-    };
+    });
 
-    // 🔥 ZOOM (FIXED + STABLE)
-    canvas.onwheel = (e) => {
+    // 🔥 ZOOM (MOBILE SAFE)
+    canvas.addEventListener("wheel", (e) => {
       e.preventDefault();
 
       const rect = canvas.getBoundingClientRect();
@@ -239,9 +262,7 @@ export default function App() {
 
       viewport.current.x = mx - world.x * viewport.current.scale;
       viewport.current.y = my - world.y * viewport.current.scale;
-
-      render();
-    };
+    });
 
     return () => {
       provider.disconnect();
@@ -250,7 +271,7 @@ export default function App() {
     };
   }, [username, tool, selectedId]);
 
-  // 🔐 LOGIN SCREEN
+  // 🔐 LOGIN
   if (!username) {
     return (
       <div style={{
