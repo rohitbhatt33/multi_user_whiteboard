@@ -3,25 +3,24 @@ import * as Y from "yjs";
 import { SocketIOProvider } from "y-socket.io";
 
 function getRandomColor() {
-  const colors = [
-    "#e63946",
-    "#457b9d",
-    "#2a9d8f",
-    "#f4a261",
-    "#9b5de5",
-    "#ff006e"
-  ];
+  const colors = ["#e63946", "#457b9d", "#2a9d8f", "#f4a261", "#9b5de5", "#ff006e"];
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
 export default function App() {
   const canvasRef = useRef(null);
-  const clearRef = useRef(null);
 
   const [tool, setTool] = useState("pen");
   const [username, setUsername] = useState("");
-  const [users, setUsers] = useState([]);
-  const [color, setColor] = useState("#000000");
+  const [objects, setObjects] = useState([]);
+
+  const scaleRef = useRef(1);
+  const offsetRef = useRef({ x: 0, y: 0 });
+
+  const panRef = useRef(false);
+  const lastPan = useRef({ x: 0, y: 0 });
+
+  const editingRef = useRef(null);
 
   useEffect(() => {
     if (!username) return;
@@ -34,33 +33,30 @@ export default function App() {
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
-      ydoc,
-      { autoConnect: true }
+      ydoc
     );
 
     const yObjects = ydoc.getArray("objects");
 
     const userColor = getRandomColor();
 
-    provider.awareness.setLocalStateField("user", {
-      username,
-      color: userColor,
-      cursor: null
-    });
-
-    const updateUsers = () => {
-      const states = Array.from(provider.awareness.getStates().values());
-      setUsers(states.filter(s => s.user?.username).map(s => s.user));
-    };
-
-    provider.awareness.on("change", updateUsers);
-
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
     let drawing = false;
     let start = null;
-    let currentPoints = [];
+    let points = [];
+
+    const toWorld = (x, y) => ({
+      x: (x - offsetRef.current.x) / scaleRef.current,
+      y: (y - offsetRef.current.y) / scaleRef.current
+    });
+
+    const applyTransform = () => {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.translate(offsetRef.current.x, offsetRef.current.y);
+      ctx.scale(scaleRef.current, scaleRef.current);
+    };
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -79,6 +75,8 @@ export default function App() {
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      applyTransform();
+
       yObjects.toArray().forEach(obj => {
         if (!obj) return;
 
@@ -86,7 +84,7 @@ export default function App() {
         ctx.fillStyle = obj.color || "#000";
         ctx.lineWidth = 2;
 
-        // ✏️ PEN (free draw)
+        // ✏️ PEN
         if (obj.type === "pen") {
           const pts = obj.points;
           if (!pts?.length) return;
@@ -97,17 +95,13 @@ export default function App() {
           for (let i = 1; i < pts.length; i++) {
             ctx.lineTo(pts[i].x, pts[i].y);
           }
+
           ctx.stroke();
         }
 
-        // 🟦 RECTANGLE
+        // ⬛ RECT
         if (obj.type === "rect") {
-          ctx.strokeRect(
-            obj.x,
-            obj.y,
-            obj.w,
-            obj.h
-          );
+          ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
         }
 
         // ⚪ CIRCLE
@@ -129,127 +123,144 @@ export default function App() {
     window.addEventListener("resize", resize);
     yObjects.observe(render);
 
-    const getPos = (e) => ({
-      x: e.clientX,
-      y: e.clientY
-    });
+    const getPos = (e) => toWorld(e.clientX, e.clientY);
 
-    // 🚀 POINTER START
+    // 🖱 DOWN
     canvas.onpointerdown = (e) => {
+      const pos = getPos(e);
+
+      // ✋ PAN
+      if (e.button === 1 || tool === "pan") {
+        panRef.current = true;
+        lastPan.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
+
+      // 📝 TEXT
+      if (tool === "text") {
+        const text = prompt("Enter text");
+        if (!text) return;
+
+        yObjects.push([{
+          type: "text",
+          x: pos.x,
+          y: pos.y,
+          text,
+          color: "#000"
+        }]);
+
+        return;
+      }
+
       drawing = true;
-      start = getPos(e);
-      currentPoints = [start];
+      start = pos;
+      points = [pos];
     };
 
-    // 🚀 POINTER MOVE
+    // 🖱 MOVE
     canvas.onpointermove = (e) => {
-      provider.awareness.setLocalStateField("user", {
-        username,
-        color: userColor,
-        cursor: getPos(e)
-      });
+      const pos = getPos(e);
+
+      if (panRef.current) {
+        offsetRef.current.x += e.clientX - lastPan.current.x;
+        offsetRef.current.y += e.clientY - lastPan.current.y;
+
+        lastPan.current = { x: e.clientX, y: e.clientY };
+        render();
+        return;
+      }
 
       if (!drawing || tool !== "pen") return;
 
-      currentPoints.push(getPos(e));
+      points.push(pos);
     };
 
-    // 🚀 POINTER END (FINALIZE OBJECT)
+    // 🖱 UP
     canvas.onpointerup = (e) => {
+      panRef.current = false;
+
       if (!drawing) return;
       drawing = false;
 
       const end = getPos(e);
 
-      // ✏ PEN
       if (tool === "pen") {
-        yObjects.push([
-          {
-            type: "pen",
-            points: [...currentPoints],
-            color: userColor
-          }
-        ]);
+        yObjects.push([{
+          type: "pen",
+          points: [...points],
+          color: "#000"
+        }]);
       }
 
-      // 🟦 RECT
       if (tool === "rect") {
-        yObjects.push([
-          {
-            type: "rect",
-            x: start.x,
-            y: start.y,
-            w: end.x - start.x,
-            h: end.y - start.y,
-            color: userColor
-          }
-        ]);
+        yObjects.push([{
+          type: "rect",
+          x: start.x,
+          y: start.y,
+          w: end.x - start.x,
+          h: end.y - start.y,
+          color: "#000"
+        }]);
       }
 
-      // ⚪ CIRCLE
       if (tool === "circle") {
         const r = Math.sqrt(
           Math.pow(end.x - start.x, 2) +
           Math.pow(end.y - start.y, 2)
         );
 
-        yObjects.push([
-          {
-            type: "circle",
-            x: start.x,
-            y: start.y,
-            r,
-            color: userColor
-          }
-        ]);
+        yObjects.push([{
+          type: "circle",
+          x: start.x,
+          y: start.y,
+          r,
+          color: "#000"
+        }]);
       }
+    };
 
-      // 📝 TEXT
-      if (tool === "text") {
-        const text = prompt("Enter text:");
+    // 🔍 ZOOM
+    canvas.onwheel = (e) => {
+      e.preventDefault();
 
-        if (text) {
-          yObjects.push([
-            {
-              type: "text",
-              x: end.x,
-              y: end.y,
-              text,
-              color: userColor
-            }
-          ]);
-        }
-      }
+      const zoomIntensity = 0.1;
+      const mouse = toWorld(e.clientX, e.clientY);
+
+      const wheel = e.deltaY < 0 ? 1 : -1;
+      const zoom = Math.exp(wheel * zoomIntensity);
+
+      const newScale = scaleRef.current * zoom;
+
+      offsetRef.current.x =
+        e.clientX - mouse.x * newScale;
+
+      offsetRef.current.y =
+        e.clientY - mouse.y * newScale;
+
+      scaleRef.current = newScale;
+
+      render();
     };
 
     canvas.style.touchAction = "none";
-
-    clearRef.current = () => {
-      yObjects.delete(0, yObjects.length);
-    };
 
     return () => {
       provider.disconnect();
       window.removeEventListener("resize", resize);
       ydoc.destroy();
     };
-  }, [username, tool, color]);
+  }, [username, tool]);
 
-  // 🔐 JOIN SCREEN
+  // 🔐 JOIN
   if (!username) {
     return (
-      <div style={{
-        height: "100vh",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center"
-      }}>
+      <div style={{ height: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
         <form onSubmit={(e) => {
           e.preventDefault();
           setUsername(e.target.username.value);
         }}>
           <input name="username" placeholder="Enter name" />
-          <button type="submit">Join</button>
+          <button>Join</button>
         </form>
       </div>
     );
@@ -274,23 +285,7 @@ export default function App() {
         <button onClick={() => setTool("rect")}>⬛</button>
         <button onClick={() => setTool("circle")}>⚪</button>
         <button onClick={() => setTool("text")}>📝</button>
-
-        <input
-          type="color"
-          value={color}
-          onChange={e => setColor(e.target.value)}
-        />
-
-        <button onClick={() => clearRef.current()}>🧹</button>
-      </div>
-
-      {/* USERS */}
-      <div style={{ position: "absolute", top: 10, left: 10 }}>
-        {users.map((u, i) => (
-          <div key={i} style={{ color: u.color }}>
-            {u.username}
-          </div>
-        ))}
+        <button onClick={() => setTool("pan")}>✋</button>
       </div>
 
       {/* CANVAS */}
@@ -302,26 +297,6 @@ export default function App() {
           display: "block"
         }}
       />
-
-      {/* CURSORS */}
-      {users.map((u, i) => u.cursor && (
-        <div
-          key={i}
-          style={{
-            position: "fixed",
-            left: u.cursor.x,
-            top: u.cursor.y,
-            pointerEvents: "none"
-          }}
-        >
-          <div style={{
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            background: u.color
-          }} />
-        </div>
-      ))}
     </>
   );
 }
