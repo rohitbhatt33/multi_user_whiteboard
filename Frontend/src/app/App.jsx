@@ -29,10 +29,13 @@ export default function App() {
     const ydoc = new Y.Doc();
 
     const provider = new SocketIOProvider(
-      "https://multi-user-whiteboard.onrender.com",
-      "whiteboard",
-      ydoc
-    );
+  "https://multi-user-whiteboard.onrender.com",
+  "whiteboard",
+  ydoc,
+  {
+    connect: true // only if your version supports options
+  }
+);
 
     const yObjects = ydoc.getArray("objects");
     window.__yObjects = yObjects;
@@ -263,7 +266,7 @@ export default function App() {
     return () => {
       provider.disconnect();
       window.removeEventListener("resize", resize);
-      ydoc;
+      ydoc.destroy();
     };
   }, [username, tool]);
 
