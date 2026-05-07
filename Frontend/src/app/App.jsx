@@ -25,17 +25,16 @@ export default function App() {
 
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
+    document.documentElement.style.height = "100%";
+    document.body.style.height = "100%";
 
     const ydoc = new Y.Doc();
 
     const provider = new SocketIOProvider(
-  "https://multi-user-whiteboard.onrender.com",
-  "whiteboard",
-  ydoc,
-  {
-    connect: true // only if your version supports options
-  }
-);
+      "https://multi-user-whiteboard.onrender.com",
+      "whiteboard",
+      ydoc
+    );
 
     const yObjects = ydoc.getArray("objects");
     window.__yObjects = yObjects;
@@ -49,11 +48,10 @@ export default function App() {
 
     const userColor = getRandomColor();
 
-    // 🚀 FIXED: MOBILE-PERFECT COORDINATE SYSTEM
+    // 🧠 FIXED MOBILE SAFE COORDINATES
     const getPos = (e) => {
       const rect = canvas.getBoundingClientRect();
 
-      // ONLY use CSS-space coordinates (this fixes mobile shift bug)
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
@@ -72,11 +70,17 @@ export default function App() {
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
 
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
+      // 📱 MOBILE FIX: use visualViewport (IMPORTANT)
+      const vw = window.visualViewport?.width || window.innerWidth;
+      const vh = window.visualViewport?.height || window.innerHeight;
 
-      canvas.style.width = window.innerWidth + "px";
-      canvas.style.height = window.innerHeight + "px";
+      const canvas = canvasRef.current;
+
+      canvas.width = vw * dpr;
+      canvas.height = vh * dpr;
+
+      canvas.style.width = vw + "px";
+      canvas.style.height = vh + "px";
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
@@ -95,7 +99,6 @@ export default function App() {
         ctx.fillStyle = obj.color || "#000";
         ctx.lineWidth = 2;
 
-        // ✏️ PEN
         if (obj.type === "pen") {
           const pts = obj.points;
           if (!pts?.length) return;
@@ -110,19 +113,16 @@ export default function App() {
           ctx.stroke();
         }
 
-        // ⬛ RECT
         if (obj.type === "rect") {
           ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
         }
 
-        // ⚪ CIRCLE
         if (obj.type === "circle") {
           ctx.beginPath();
           ctx.arc(obj.x, obj.y, obj.r, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // 📝 TEXT
         if (obj.type === "text") {
           ctx.font = "16px Arial";
           ctx.fillText(obj.text, obj.x, obj.y);
@@ -131,7 +131,15 @@ export default function App() {
     };
 
     resize();
+
     window.addEventListener("resize", resize);
+
+    // 📱 MOBILE FIX LISTENERS
+    const handleViewport = () => resize();
+
+    window.visualViewport?.addEventListener("resize", handleViewport);
+    window.visualViewport?.addEventListener("scroll", handleViewport);
+
     yObjects.observe(render);
 
     canvas.style.touchAction = "none";
@@ -162,7 +170,6 @@ export default function App() {
     canvas.onpointermove = (e) => {
       const pos = getPos(e);
 
-      // ✋ PAN
       if (panRef.current) {
         offsetRef.current.x += e.clientX - lastPan.current.x;
         offsetRef.current.y += e.clientY - lastPan.current.y;
@@ -172,7 +179,6 @@ export default function App() {
         return;
       }
 
-      // 🧽 ERASER
       if (tool === "eraser") {
         const objs = window.__yObjects.toArray();
 
@@ -265,7 +271,11 @@ export default function App() {
 
     return () => {
       provider.disconnect();
+
       window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", handleViewport);
+      window.visualViewport?.removeEventListener("scroll", handleViewport);
+
       ydoc.destroy();
     };
   }, [username, tool]);
@@ -290,7 +300,6 @@ export default function App() {
     setTextBox(null);
   };
 
-  // 🔐 JOIN SCREEN
   if (!username) {
     return (
       <div style={{ height: "100vh", display: "flex", justifyContent: "center", alignItems: "center" }}>
@@ -328,7 +337,6 @@ export default function App() {
         <button onClick={() => setTool("pan")}>✋</button>
       </div>
 
-      {/* CANVAS */}
       <canvas
         ref={canvasRef}
         style={{
@@ -338,7 +346,6 @@ export default function App() {
         }}
       />
 
-      {/* TEXT INPUT */}
       {textBox && (
         <input
           autoFocus
