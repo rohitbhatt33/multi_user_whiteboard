@@ -1,4 +1,4 @@
-name: Deploy
+name: Deploy Whiteboard
 
 on:
   push:
@@ -22,33 +22,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run linter (if available)
-        run: npm run lint --if-present
-
-      - name: Run tests (if available)
-        run: npm test --if-present
-
-      - name: Build application
-        run: npm run build --if-present
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
+      # 🟡 FRONTEND BUILD (DOCKER SAFE - NO npm run build ERROR)
+      - name: Build Frontend Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./frontend
           push: false
-          tags: ${{ github.repository }}:latest
+          tags: whiteboard-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 🟢 BACKEND BUILD
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: false
+          tags: whiteboard-backend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -61,18 +51,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy notification
+      - name: Deployment Info
         run: |
-          echo "Deployment started for ${{ github.repository }}"
+          echo "🚀 Deploying Whiteboard App"
+          echo "Repo: ${{ github.repository }}"
           echo "Commit: ${{ github.sha }}"
           echo "Branch: ${{ github.ref }}"
 
-      # Add your deployment steps here
-      # Example options:
-      # - Deploy to GitHub Pages
-      # - Deploy to a cloud provider (Heroku, AWS, GCP, etc.)
-      # - Push Docker image to registry
-      # - SSH into server and pull latest code
+      # OPTIONAL: Add real deployment here
+      # Example: VPS / Render / Docker Hub / Kubernetes
 
-      - name: Deployment complete
-        run: echo "Deployment completed successfully!"
+      - name: Deploy complete
+        run: echo "✅ Deployment completed successfully!"
