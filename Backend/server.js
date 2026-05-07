@@ -12,7 +12,11 @@ const httpServer = createServer(app)
 
 const io = new Server(httpServer, {
   cors: {
-    origin: "*",
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "https://multi-user-whiteboard-j8rzosbp0-rohitbhatt33s-projects.vercel.app"
+    ],
     methods: ["GET", "POST"]
   }
 })
