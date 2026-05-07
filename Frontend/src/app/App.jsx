@@ -263,7 +263,9 @@ export default function App() {
     return () => {
       provider.disconnect();
       window.removeEventListener("resize", resize);
-      ydoc.destroy();
+      ydoc,  {
+      autoConnect: true
+    }
     };
   }, [username, tool]);
 
