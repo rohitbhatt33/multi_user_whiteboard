@@ -36,7 +36,7 @@ export default function App() {
     const ydoc = new Y.Doc()
 
     const provider = new SocketIOProvider(
-      "http://localhost:3000",
+      "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
       ydoc,
       { autoConnect: true }
