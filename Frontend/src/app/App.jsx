@@ -31,6 +31,9 @@ export default function App() {
   link.click()
 }
   useEffect(() => {
+    document.body.style.margin = "0"
+document.body.style.overflow = "hidden"
+width: window.innerWidth < 600 ? "120px" : "200px"
     if (!username) return
 
     const ydoc = new Y.Doc()
@@ -41,7 +44,14 @@ export default function App() {
       ydoc,
       { autoConnect: true }
     )
+const getTouchPos = (touch) => {
+  const rect = canvas.getBoundingClientRect()
 
+  return {
+    x: touch.clientX - rect.left,
+    y: touch.clientY - rect.top
+  }
+}
     const yStrokes = ydoc.getArray("strokes")
     const userColor = getRandomColor()
 
@@ -67,8 +77,16 @@ export default function App() {
     const canvas = canvasRef.current
     const ctx = canvas.getContext("2d")
 
-    canvas.width = window.innerWidth
-    canvas.height = window.innerHeight
+   const resizeCanvas = () => {
+  canvas.width = window.innerWidth
+  canvas.height = window.innerHeight
+  render()
+}
+
+resizeCanvas()
+
+window.addEventListener("resize", resizeCanvas)
+window.removeEventListener("resize", resizeCanvas)
 
     const render = () => {
   ctx.fillStyle = "#ffffff"
@@ -122,6 +140,7 @@ ctx.lineJoin = "round"
       ctx.stroke()
     }
 
+
     canvas.onmouseup = () => {
   if (!drawing) return
   drawing = false
@@ -155,6 +174,44 @@ ctx.lineJoin = "round"
       }
     })
   }
+}
+canvas.ontouchstart = (e) => {
+  e.preventDefault()
+
+  drawing = true
+
+  const pos = getTouchPos(e.touches[0])
+
+  currentStroke = [pos]
+}
+
+canvas.ontouchmove = (e) => {
+  e.preventDefault()
+
+  const pos = getTouchPos(e.touches[0])
+
+  provider.awareness.setLocalStateField("user", {
+    username,
+    color: userColor,
+    cursor: pos
+  })
+
+  if (!drawing) return
+
+  currentStroke.push(pos)
+
+  render()
+
+  ctx.beginPath()
+  ctx.moveTo(currentStroke[0].x, currentStroke[0].y)
+
+  currentStroke.forEach(p => ctx.lineTo(p.x, p.y))
+
+  ctx.stroke()
+}
+
+canvas.ontouchend = () => {
+  canvas.onmouseup()
 }
     // 🧽 Clear board (synced)
     clearRef.current = () => {
@@ -291,10 +348,15 @@ ctx.lineJoin = "round"
     </div>
 
     {/* 🎨 Canvas */}
-    <canvas
-      ref={canvasRef}
-      style={{ display: "block" }}
-    />
+   <canvas
+  ref={canvasRef}
+  style={{
+    width: "100vw",
+    height: "100vh",
+    display: "block",
+    touchAction: "none"
+  }}
+/>
 
     {/* 🖱 Colored Cursors */}
     {users.map((u, i) =>
