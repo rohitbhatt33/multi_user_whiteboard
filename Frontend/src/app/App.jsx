@@ -2,24 +2,53 @@ import { useEffect, useRef, useState } from "react";
 import * as Y from "yjs";
 import { SocketIOProvider } from "y-socket.io";
 
+function getColor() {
+  const colors = ["#e63946", "#457b9d", "#2a9d8f", "#f4a261", "#9b5de5"];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
 export default function App() {
   const canvasRef = useRef(null);
+
+  const [username, setUsername] = useState("");
   const [tool, setTool] = useState("pen");
+  const [users, setUsers] = useState([]);
 
   useEffect(() => {
+    if (!username) return;
+
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
-    // 🧠 YJS SETUP (SAFE)
     const ydoc = new Y.Doc();
 
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
-      ydoc,{autoConnect: true}
+      ydoc,{autoConnect:true}
     );
 
     const yItems = ydoc.getArray("items");
+    const color = getColor();
+
+    // 👤 Awareness (IMPORTANT FIXED PART)
+    provider.awareness.setLocalStateField("user", {
+      username,
+      color,
+      cursor: null
+    });
+
+    const updateUsers = () => {
+      const states = Array.from(provider.awareness.getStates().values());
+
+      setUsers(
+        states
+          .map(s => s.user)
+          .filter(Boolean)
+      );
+    };
+
+    provider.awareness.on("change", updateUsers);
 
     let drawing = false;
     let start = null;
@@ -34,7 +63,9 @@ export default function App() {
     // 📐 GRID
     const drawGrid = () => {
       const step = 40;
+
       ctx.strokeStyle = "#eee";
+      ctx.lineWidth = 1;
 
       for (let x = 0; x < canvas.width; x += step) {
         ctx.beginPath();
@@ -51,7 +82,7 @@ export default function App() {
       }
     };
 
-    // 🎨 RENDER FROM YJS STATE
+    // 🎨 RENDER
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawGrid();
@@ -90,10 +121,9 @@ export default function App() {
     resize();
     window.addEventListener("resize", resize);
 
-    // 🔥 SAFE OBSERVER
     yItems.observe(render);
 
-    // 📍 MOBILE FIXED COORDS
+    // 📍 FIX MOBILE COORDS
     const getPos = (e) => {
       const rect = canvas.getBoundingClientRect();
       return {
@@ -102,7 +132,7 @@ export default function App() {
       };
     };
 
-    // 🟢 POINTER DOWN
+    // 🟢 START
     canvas.addEventListener("pointerdown", (e) => {
       drawing = true;
       const p = getPos(e);
@@ -116,7 +146,7 @@ export default function App() {
       }
     });
 
-    // ✏️ PEN LIVE DRAW
+    // ✏️ MOVE
     canvas.addEventListener("pointermove", (e) => {
       if (!drawing || tool !== "pen") return;
 
@@ -131,9 +161,16 @@ export default function App() {
       ctx.moveTo(prev.x, prev.y);
       ctx.lineTo(p.x, p.y);
       ctx.stroke();
+
+      // 👇 LIVE CURSOR UPDATE (IMPORTANT)
+      provider.awareness.setLocalStateField("user", {
+        username,
+        color,
+        cursor: p
+      });
     });
 
-    // 🔴 POINTER UP (SAVE TO YJS)
+    // 🔴 END
     canvas.addEventListener("pointerup", (e) => {
       drawing = false;
 
@@ -143,7 +180,7 @@ export default function App() {
         yItems.push([{
           type: "pen",
           points: [...points],
-          color: "#000"
+          color
         }]);
       }
 
@@ -154,7 +191,7 @@ export default function App() {
           y: start.y,
           w: p.x - start.x,
           h: p.y - start.y,
-          color: "#000"
+          color
         }]);
       }
 
@@ -164,7 +201,7 @@ export default function App() {
           x: start.x,
           y: start.y,
           r: Math.hypot(p.x - start.x, p.y - start.y),
-          color: "#000"
+          color
         }]);
       }
 
@@ -177,7 +214,27 @@ export default function App() {
       window.removeEventListener("resize", resize);
       ydoc.destroy();
     };
-  }, [tool]);
+  }, [username, tool]);
+
+  // 🔐 LOGIN SCREEN
+  if (!username) {
+    return (
+      <div style={{
+        height: "100vh",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center"
+      }}>
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          setUsername(e.target.username.value);
+        }}>
+          <input name="username" placeholder="Enter name" />
+          <button>Join</button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -198,6 +255,45 @@ export default function App() {
         <button onClick={() => setTool("rect")}>⬛</button>
         <button onClick={() => setTool("circle")}>⚪</button>
       </div>
+
+      {/* 👥 USERS (FIXED - NOW VISIBLE) */}
+      <div style={{
+        position: "absolute",
+        top: 10,
+        left: 10,
+        background: "white",
+        padding: 10,
+        borderRadius: 8,
+        zIndex: 20
+      }}>
+        <strong>Users</strong>
+        {users.map((u, i) => (
+          <div key={i} style={{ color: u.color }}>
+            ● {u.username}
+          </div>
+        ))}
+      </div>
+
+      {/* CURSORS */}
+      {users.map((u, i) => u.cursor && (
+        <div
+          key={i}
+          style={{
+            position: "fixed",
+            left: u.cursor.x,
+            top: u.cursor.y,
+            pointerEvents: "none",
+            zIndex: 30
+          }}
+        >
+          <div style={{
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: u.color
+          }} />
+        </div>
+      ))}
 
       <canvas
         ref={canvasRef}
