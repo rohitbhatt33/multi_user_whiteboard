@@ -9,7 +9,6 @@ function getRandomColor() {
 
 export default function App() {
   const canvasRef = useRef(null);
-  const inputRef = useRef(null);
 
   const [tool, setTool] = useState("pen");
   const [username, setUsername] = useState("");
@@ -47,6 +46,9 @@ export default function App() {
     let drawing = false;
     let start = null;
     let points = [];
+
+    // 🧠 EXPOSE FOR CLEAR BUTTON
+    window.__yObjects = yObjects;
 
     const toWorld = (x, y) => ({
       x: (x - offsetRef.current.x) / scaleRef.current,
@@ -137,15 +139,13 @@ export default function App() {
         return;
       }
 
-      // 📝 TEXT TOOL (NO PROMPT EVER)
+      // 📝 TEXT
       if (tool === "text") {
         setTextBox({
           x: pos.x,
           y: pos.y,
           value: ""
         });
-
-        setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
 
@@ -158,12 +158,31 @@ export default function App() {
     canvas.onpointermove = (e) => {
       const pos = getPos(e);
 
+      // ✋ PAN
       if (panRef.current) {
         offsetRef.current.x += e.clientX - lastPan.current.x;
         offsetRef.current.y += e.clientY - lastPan.current.y;
 
         lastPan.current = { x: e.clientX, y: e.clientY };
         render();
+        return;
+      }
+
+      // 🧽 ERASER (FIXED)
+      if (tool === "eraser") {
+        const objs = yObjects.toArray();
+
+        objs.forEach((obj, index) => {
+          if (!obj?.points) return;
+
+          const hit = obj.points.some(p =>
+            Math.abs(p.x - pos.x) < 20 &&
+            Math.abs(p.y - pos.y) < 20
+          );
+
+          if (hit) yObjects.delete(index, 1);
+        });
+
         return;
       }
 
@@ -186,13 +205,29 @@ export default function App() {
       }
 
       if (tool === "rect") {
-        yObjects.push([{ type: "rect", x: start.x, y: start.y, w: end.x - start.x, h: end.y - start.y, color: "#000" }]);
+        yObjects.push([{
+          type: "rect",
+          x: start.x,
+          y: start.y,
+          w: end.x - start.x,
+          h: end.y - start.y,
+          color: "#000"
+        }]);
       }
 
       if (tool === "circle") {
-        const r = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+        const r = Math.sqrt(
+          Math.pow(end.x - start.x, 2) +
+          Math.pow(end.y - start.y, 2)
+        );
 
-        yObjects.push([{ type: "circle", x: start.x, y: start.y, r, color: "#000" }]);
+        yObjects.push([{
+          type: "circle",
+          x: start.x,
+          y: start.y,
+          r,
+          color: "#000"
+        }]);
       }
     };
 
@@ -200,9 +235,9 @@ export default function App() {
     canvas.onwheel = (e) => {
       e.preventDefault();
 
-      const zoomIntensity = 0.1;
       const mouse = toWorld(e.clientX, e.clientY);
 
+      const zoomIntensity = 0.1;
       const wheel = e.deltaY < 0 ? 1 : -1;
       const zoom = Math.exp(wheel * zoomIntensity);
 
@@ -225,16 +260,19 @@ export default function App() {
     };
   }, [username, tool]);
 
-  // 💾 SAVE TEXT (INLINE)
+  // 🧹 CLEAR
+  const clearBoard = () => {
+    window.__yObjects?.delete(0, window.__yObjects.length);
+  };
+
+  // 📝 SAVE TEXT
   const saveText = () => {
     if (!textBox?.value) {
       setTextBox(null);
       return;
     }
 
-    const yObjects = window.__yObjects;
-
-    yObjects?.push([{
+    window.__yObjects.push([{
       type: "text",
       x: textBox.x,
       y: textBox.y,
@@ -280,6 +318,8 @@ export default function App() {
         <button onClick={() => setTool("circle")}>⚪</button>
         <button onClick={() => setTool("text")}>📝</button>
         <button onClick={() => setTool("pan")}>✋</button>
+
+        <button onClick={clearBoard}>🧹</button>
       </div>
 
       {/* CANVAS */}
@@ -292,10 +332,10 @@ export default function App() {
         }}
       />
 
-      {/* 📝 INLINE TEXT EDITOR (NO PROMPT) */}
+      {/* 📝 INLINE TEXT INPUT */}
       {textBox && (
         <input
-          ref={inputRef}
+          autoFocus
           value={textBox.value}
           onChange={(e) =>
             setTextBox({ ...textBox, value: e.target.value })
@@ -309,9 +349,8 @@ export default function App() {
             left: textBox.x,
             top: textBox.y,
             fontSize: 16,
-            border: "1px solid #ccc",
             padding: 4,
-            outline: "none",
+            border: "1px solid #ccc",
             background: "white",
             zIndex: 9999
           }}
