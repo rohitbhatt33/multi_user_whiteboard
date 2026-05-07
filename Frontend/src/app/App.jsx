@@ -31,16 +31,11 @@ export default function App() {
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
-      ydoc,  {
-      autoConnect: true
-    }
+      ydoc
     );
 
     const yObjects = ydoc.getArray("objects");
-
     window.__yObjects = yObjects;
-
-    const userColor = getRandomColor();
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
@@ -49,13 +44,19 @@ export default function App() {
     let start = null;
     let points = [];
 
-    // 🚀 FIXED COORDINATE SYSTEM (MOBILE SAFE)
+    const userColor = getRandomColor();
+
+    // 🚀 FIXED: MOBILE-PERFECT COORDINATE SYSTEM
     const getPos = (e) => {
       const rect = canvas.getBoundingClientRect();
 
+      // ONLY use CSS-space coordinates (this fixes mobile shift bug)
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
       return {
-        x: (e.clientX - rect.left - offsetRef.current.x) / scaleRef.current,
-        y: (e.clientY - rect.top - offsetRef.current.y) / scaleRef.current
+        x: (x - offsetRef.current.x) / scaleRef.current,
+        y: (y - offsetRef.current.y) / scaleRef.current
       };
     };
 
@@ -134,16 +135,16 @@ export default function App() {
 
     // 🖱 DOWN
     canvas.onpointerdown = (e) => {
+      e.preventDefault();
+
       const pos = getPos(e);
 
-      // ✋ PAN MODE
       if (e.button === 1 || tool === "pan") {
         panRef.current = true;
         lastPan.current = { x: e.clientX, y: e.clientY };
         return;
       }
 
-      // 📝 TEXT TOOL (NO PROMPT)
       if (tool === "text") {
         setTextBox({ x: pos.x, y: pos.y, value: "" });
         return;
@@ -241,18 +242,20 @@ export default function App() {
     canvas.onwheel = (e) => {
       e.preventDefault();
 
-      const mouse = getPos(e);
+      const rect = canvas.getBoundingClientRect();
 
-      const zoomIntensity = 0.1;
-      const wheel = e.deltaY < 0 ? 1 : -1;
-      const zoom = Math.exp(wheel * zoomIntensity);
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-      const newScale = scaleRef.current * zoom;
+      const worldX = (mouseX - offsetRef.current.x) / scaleRef.current;
+      const worldY = (mouseY - offsetRef.current.y) / scaleRef.current;
 
-      offsetRef.current.x = e.clientX - mouse.x * newScale;
-      offsetRef.current.y = e.clientY - mouse.y * newScale;
+      const zoom = e.deltaY < 0 ? 1.1 : 0.9;
 
-      scaleRef.current = newScale;
+      scaleRef.current *= zoom;
+
+      offsetRef.current.x = mouseX - worldX * scaleRef.current;
+      offsetRef.current.y = mouseY - worldY * scaleRef.current;
 
       render();
     };
@@ -319,7 +322,7 @@ export default function App() {
         <button onClick={() => setTool("circle")}>⚪</button>
         <button onClick={() => setTool("text")}>📝</button>
         <button onClick={() => setTool("eraser")}>🧽</button>
-        {/*<button onClick={() => setTool("pan")}>✋</button>*/}
+        <button onClick={() => setTool("pan")}>✋</button>
       </div>
 
       {/* CANVAS */}
@@ -332,7 +335,7 @@ export default function App() {
         }}
       />
 
-      {/* 📝 TEXT INPUT */}
+      {/* TEXT INPUT */}
       {textBox && (
         <input
           autoFocus
