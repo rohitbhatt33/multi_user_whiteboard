@@ -23,6 +23,10 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [color, setColor] = useState("#000000");
 
+  // 🔥 ZOOM STATE (ADDED ONLY)
+  const scaleRef = useRef(1);
+  const offsetRef = useRef({ x: 0, y: 0 });
+
   useEffect(() => {
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
@@ -34,8 +38,7 @@ export default function App() {
     const provider = new SocketIOProvider(
       "https://multi-user-whiteboard.onrender.com",
       "whiteboard",
-      ydoc,
-      { autoConnect: true }
+      ydoc
     );
 
     const yStrokes = ydoc.getArray("strokes");
@@ -88,7 +91,7 @@ export default function App() {
       ctx.restore();
     };
 
-    // 📏 FIXED CANVAS SCALE (IMPORTANT FOR MOBILE)
+    // 📏 CANVAS RESIZE
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
 
@@ -103,10 +106,17 @@ export default function App() {
       render();
     };
 
+    // 🎯 RENDER
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       drawGrid(ctx, window.innerWidth, window.innerHeight);
+
+      ctx.save();
+
+      // 🔥 APPLY ZOOM + PAN
+      ctx.translate(offsetRef.current.x, offsetRef.current.y);
+      ctx.scale(scaleRef.current, scaleRef.current);
 
       yStrokes.toArray().forEach(stroke => {
         if (!stroke?.points?.length) return;
@@ -129,9 +139,16 @@ export default function App() {
 
         ctx.stroke();
       });
+
+      ctx.restore();
     };
 
     const renderLive = () => {
+      ctx.save();
+
+      ctx.translate(offsetRef.current.x, offsetRef.current.y);
+      ctx.scale(scaleRef.current, scaleRef.current);
+
       ctx.strokeStyle = tool === "eraser" ? "#fff" : userColor;
       ctx.lineWidth = tool === "eraser" ? 30 : 3;
       ctx.lineCap = "round";
@@ -141,24 +158,31 @@ export default function App() {
 
       currentStroke.forEach(p => ctx.lineTo(p.x, p.y));
       ctx.stroke();
+
+      ctx.restore();
     };
 
     resize();
     window.addEventListener("resize", resize);
     yStrokes.observe(render);
 
-    // 🚀 POINTER EVENTS (FIX FOR MOBILE)
+    canvas.style.touchAction = "none";
+
+    // 🖱 POINTER DOWN
     canvas.onpointerdown = (e) => {
       drawing = true;
 
+      const rect = canvas.getBoundingClientRect();
+
       currentStroke = [
         {
-          x: e.clientX,
-          y: e.clientY
+          x: (e.clientX - rect.left - offsetRef.current.x) / scaleRef.current,
+          y: (e.clientY - rect.top - offsetRef.current.y) / scaleRef.current
         }
       ];
     };
 
+    // 🖱 POINTER MOVE
     canvas.onpointermove = (e) => {
       provider.awareness.setLocalStateField("user", {
         username,
@@ -171,14 +195,17 @@ export default function App() {
 
       if (!drawing) return;
 
+      const rect = canvas.getBoundingClientRect();
+
       currentStroke.push({
-        x: e.clientX,
-        y: e.clientY
+        x: (e.clientX - rect.left - offsetRef.current.x) / scaleRef.current,
+        y: (e.clientY - rect.top - offsetRef.current.y) / scaleRef.current
       });
 
       renderLive();
     };
 
+    // 🖱 POINTER UP
     const end = () => {
       if (!drawing) return;
       drawing = false;
@@ -216,7 +243,31 @@ export default function App() {
       yStrokes.delete(0, yStrokes.length);
     };
 
-    canvas.style.touchAction = "none";
+    // 🔥 ZOOM FEATURE (ADDED)
+    canvas.onwheel = (e) => {
+      e.preventDefault();
+
+      const rect = canvas.getBoundingClientRect();
+
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const worldX = (mouseX - offsetRef.current.x) / scaleRef.current;
+      const worldY = (mouseY - offsetRef.current.y) / scaleRef.current;
+
+      const zoomIntensity = 0.1;
+      const wheel = e.deltaY < 0 ? 1 : -1;
+      const zoom = Math.exp(wheel * zoomIntensity);
+
+      const newScale = scaleRef.current * zoom;
+
+      offsetRef.current.x = mouseX - worldX * newScale;
+      offsetRef.current.y = mouseY - worldY * newScale;
+
+      scaleRef.current = newScale;
+
+      render();
+    };
 
     return () => {
       provider.disconnect();
