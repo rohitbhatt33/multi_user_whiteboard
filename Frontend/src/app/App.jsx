@@ -24,10 +24,10 @@ export default function App() {
   const [color, setColor] = useState("#000000");
 
   useEffect(() => {
+    if (!username) return;
+
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
-
-    if (!username) return;
 
     const ydoc = new Y.Doc();
 
@@ -38,7 +38,7 @@ export default function App() {
       { autoConnect: true }
     );
 
-    const yStrokes = ydoc.getArray("strokes");
+    const yObjects = ydoc.getArray("objects");
 
     const userColor = getRandomColor();
 
@@ -50,11 +50,7 @@ export default function App() {
 
     const updateUsers = () => {
       const states = Array.from(provider.awareness.getStates().values());
-      setUsers(
-        states
-          .filter(s => s.user?.username)
-          .map(s => s.user)
-      );
+      setUsers(states.filter(s => s.user?.username).map(s => s.user));
     };
 
     provider.awareness.on("change", updateUsers);
@@ -63,32 +59,9 @@ export default function App() {
     const ctx = canvas.getContext("2d");
 
     let drawing = false;
-    let currentStroke = [];
+    let start = null;
+    let currentPoints = [];
 
-    // 📐 GRID
-    const drawGrid = (ctx, w, h) => {
-      ctx.save();
-      ctx.strokeStyle = "#f0f0f0";
-      ctx.lineWidth = 1;
-
-      for (let x = 0; x < w; x += 40) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
-
-      for (let y = 0; y < h; y += 40) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
-
-      ctx.restore();
-    };
-
-    // 📏 FIXED CANVAS SCALE (IMPORTANT FOR MOBILE)
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
 
@@ -106,117 +79,154 @@ export default function App() {
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      drawGrid(ctx, window.innerWidth, window.innerHeight);
+      yObjects.toArray().forEach(obj => {
+        if (!obj) return;
 
-      yStrokes.toArray().forEach(stroke => {
-        if (!stroke?.points?.length) return;
+        ctx.strokeStyle = obj.color || "#000";
+        ctx.fillStyle = obj.color || "#000";
+        ctx.lineWidth = 2;
 
-        ctx.strokeStyle = stroke.color || "#000";
-        ctx.lineWidth = stroke.width || 3;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
+        // ✏️ PEN (free draw)
+        if (obj.type === "pen") {
+          const pts = obj.points;
+          if (!pts?.length) return;
 
-        const pts = stroke.points;
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
 
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-
-        for (let i = 1; i < pts.length - 1; i++) {
-          const midX = (pts[i].x + pts[i + 1].x) / 2;
-          const midY = (pts[i].y + pts[i + 1].y) / 2;
-          ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+          for (let i = 1; i < pts.length; i++) {
+            ctx.lineTo(pts[i].x, pts[i].y);
+          }
+          ctx.stroke();
         }
 
-        ctx.stroke();
+        // 🟦 RECTANGLE
+        if (obj.type === "rect") {
+          ctx.strokeRect(
+            obj.x,
+            obj.y,
+            obj.w,
+            obj.h
+          );
+        }
+
+        // ⚪ CIRCLE
+        if (obj.type === "circle") {
+          ctx.beginPath();
+          ctx.arc(obj.x, obj.y, obj.r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // 📝 TEXT
+        if (obj.type === "text") {
+          ctx.font = "16px Arial";
+          ctx.fillText(obj.text, obj.x, obj.y);
+        }
       });
-    };
-
-    const renderLive = () => {
-      ctx.strokeStyle = tool === "eraser" ? "#fff" : userColor;
-      ctx.lineWidth = tool === "eraser" ? 30 : 3;
-      ctx.lineCap = "round";
-
-      ctx.beginPath();
-      ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
-
-      currentStroke.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
     };
 
     resize();
     window.addEventListener("resize", resize);
-    yStrokes.observe(render);
+    yObjects.observe(render);
 
-    // 🚀 POINTER EVENTS (FIX FOR MOBILE)
+    const getPos = (e) => ({
+      x: e.clientX,
+      y: e.clientY
+    });
+
+    // 🚀 POINTER START
     canvas.onpointerdown = (e) => {
       drawing = true;
-
-      currentStroke = [
-        {
-          x: e.clientX,
-          y: e.clientY
-        }
-      ];
+      start = getPos(e);
+      currentPoints = [start];
     };
 
+    // 🚀 POINTER MOVE
     canvas.onpointermove = (e) => {
       provider.awareness.setLocalStateField("user", {
         username,
         color: userColor,
-        cursor: {
-          x: e.clientX,
-          y: e.clientY
-        }
+        cursor: getPos(e)
       });
 
-      if (!drawing) return;
+      if (!drawing || tool !== "pen") return;
 
-      currentStroke.push({
-        x: e.clientX,
-        y: e.clientY
-      });
-
-      renderLive();
+      currentPoints.push(getPos(e));
     };
 
-    const end = () => {
+    // 🚀 POINTER END (FINALIZE OBJECT)
+    canvas.onpointerup = (e) => {
       if (!drawing) return;
       drawing = false;
 
-      if (tool === "pen" && currentStroke.length > 1) {
-        yStrokes.push([
+      const end = getPos(e);
+
+      // ✏ PEN
+      if (tool === "pen") {
+        yObjects.push([
           {
-            points: [...currentStroke],
-            color: userColor,
-            width: 3
+            type: "pen",
+            points: [...currentPoints],
+            color: userColor
           }
         ]);
       }
 
-      if (tool === "eraser") {
-        const strokes = yStrokes.toArray();
+      // 🟦 RECT
+      if (tool === "rect") {
+        yObjects.push([
+          {
+            type: "rect",
+            x: start.x,
+            y: start.y,
+            w: end.x - start.x,
+            h: end.y - start.y,
+            color: userColor
+          }
+        ]);
+      }
 
-        strokes.forEach((stroke, index) => {
-          const hit = stroke.points.some(p =>
-            currentStroke.some(e =>
-              Math.abs(p.x - e.x) < 50 &&
-              Math.abs(p.y - e.y) < 50
-            )
-          );
+      // ⚪ CIRCLE
+      if (tool === "circle") {
+        const r = Math.sqrt(
+          Math.pow(end.x - start.x, 2) +
+          Math.pow(end.y - start.y, 2)
+        );
 
-          if (hit) yStrokes.delete(index, 1);
-        });
+        yObjects.push([
+          {
+            type: "circle",
+            x: start.x,
+            y: start.y,
+            r,
+            color: userColor
+          }
+        ]);
+      }
+
+      // 📝 TEXT
+      if (tool === "text") {
+        const text = prompt("Enter text:");
+
+        if (text) {
+          yObjects.push([
+            {
+              type: "text",
+              x: end.x,
+              y: end.y,
+              text,
+              color: userColor
+            }
+          ]);
+        }
       }
     };
 
-    canvas.onpointerup = end;
-    canvas.onpointerleave = end;
+    canvas.style.touchAction = "none";
 
     clearRef.current = () => {
-      yStrokes.delete(0, yStrokes.length);
+      yObjects.delete(0, yObjects.length);
     };
-
-    canvas.style.touchAction = "none";
 
     return () => {
       provider.disconnect();
@@ -261,7 +271,9 @@ export default function App() {
         zIndex: 10
       }}>
         <button onClick={() => setTool("pen")}>✏️</button>
-        <button onClick={() => setTool("eraser")}>🧽</button>
+        <button onClick={() => setTool("rect")}>⬛</button>
+        <button onClick={() => setTool("circle")}>⚪</button>
+        <button onClick={() => setTool("text")}>📝</button>
 
         <input
           type="color"
