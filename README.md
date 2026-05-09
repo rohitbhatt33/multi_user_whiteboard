@@ -56,15 +56,28 @@ npm start
 ## Project Structure
 
 ```
-multi_user_whiteboard/
-├── src/
-│   ├── components/     # React components
-│   ├── pages/          # Page components
-│   ├── styles/         # CSS files
-│   └── utils/          # Utility functions
-├── public/             # Static files
-├── package.json        # Project dependencies
-└── README.md           # This file
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── Backend/
+│   ├── Dockerfile
+│   ├── server.js
+│   ├── package.json
+│   └── .dockerignore
+├── Frontend/
+│   ├── Dockerfile              # (recommended if containerizing frontend)
+│   ├── public/
+│   ├── src/
+│   │   └── app/
+│   │       ├── App.jsx
+│   │       └── App.css
+│   └── package.json
+├── docker-compose.yml          # 🔥 Added
+├── .dockerignore                      # optional
+└── .gitignore
+└── README.md
+
 ```
 
 ## Contributing
